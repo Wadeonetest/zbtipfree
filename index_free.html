@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>屏幕录制工具</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #1e1e1e;
+      color: #f0f0f0;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    .header {
+      background-color: #252525;
+      color: #ffffff;
+      padding: 12px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #333333;
+    }
+
+    .header h1 {
+      font-size: 20px;
+      font-weight: 600;
+      color: #4CAF50;
+    }
+
+    .controls {
+      display: flex;
+      gap: 12px;
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: all 0.2s ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+
+    .btn:active {
+      transform: translateY(0);
+    }
+
+    .btn-start {
+      background-color: #4CAF50;
+      color: white;
+    }
+
+    .btn-start:hover {
+      background-color: #45a049;
+    }
+
+    .btn-pause {
+      background-color: #ff9800;
+      color: white;
+    }
+
+    .btn-pause:hover {
+      background-color: #f57c00;
+    }
+
+    .btn-stop {
+      background-color: #f44336;
+      color: white;
+    }
+
+    .btn-stop:hover {
+      background-color: #d32f2f;
+    }
+
+    .btn-edit {
+      background-color: #2196F3;
+      color: white;
+    }
+
+    .btn-edit:hover {
+      background-color: #1976D2;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .main-content {
+      flex: 1;
+      display: flex;
+      padding: 20px;
+      gap: 20px;
+      overflow: hidden;
+    }
+
+    .left-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      overflow: hidden;
+    }
+
+    .recording-area {
+      background-color: #252525;
+      border-radius: 8px;
+      padding: 20px;
+      border: 1px solid #333333;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .section-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #b0b0b0;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .area-selection {
+      background-color: #2d2d2d;
+      border-radius: 6px;
+      padding: 15px;
+      margin-bottom: 20px;
+      border: 1px solid #3a3a3a;
+    }
+
+    .area-inputs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      margin-top: 10px;
+    }
+
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .input-group label {
+      font-size: 12px;
+      color: #b0b0b0;
+      font-weight: 500;
+    }
+
+    .input-group input {
+      padding: 8px 10px;
+      background-color: #333333;
+      border: 1px solid #444444;
+      border-radius: 4px;
+      color: #f0f0f0;
+      font-size: 14px;
+      transition: border-color 0.2s ease;
+    }
+
+    .input-group input:focus {
+      outline: none;
+      border-color: #4CAF50;
+    }
+
+    .video-preview {
+      flex: 1;
+      background-color: #121212;
+      border-radius: 6px;
+      position: relative;
+      overflow: hidden;
+      border: 1px solid #333333;
+      min-height: 350px;
+    }
+
+    .video-element {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .progress-container {
+      margin-top: 20px;
+      position: relative;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 10px;
+      background-color: #333333;
+      border-radius: 5px;
+      position: relative;
+      cursor: pointer;
+      border: 1px solid #444444;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background-color: #4CAF50;
+      border-radius: 4px;
+      width: 0%;
+      transition: width 0.1s ease;
+    }
+
+    .marker {
+      position: absolute;
+      top: -6px;
+      width: 20px;
+      height: 20px;
+      background-color: #ffeb3b;
+      border-radius: 50%;
+      cursor: pointer;
+      transform: translateX(-50%);
+      z-index: 10;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      transition: all 0.2s ease;
+    }
+
+    .marker:hover {
+      background-color: #ffc107;
+      transform: translateX(-50%) scale(1.1);
+    }
+
+    .marker-label {
+      position: absolute;
+      top: -30px;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: rgba(0,0,0,0.8);
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      white-space: nowrap;
+      display: none;
+      z-index: 20;
+      border: 1px solid #444444;
+    }
+
+    .marker:hover .marker-label {
+      display: block;
+    }
+
+    .right-panel {
+      width: 320px;
+      background-color: #252525;
+      border-radius: 8px;
+      padding: 20px;
+      border: 1px solid #333333;
+      overflow-y: auto;
+      flex-shrink: 0;
+    }
+
+    .panel-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 15px;
+      color: #f0f0f0;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #333333;
+    }
+
+    .clip-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .clip-item {
+      background-color: #2d2d2d;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      padding: 12px;
+      transition: all 0.2s ease;
+    }
+
+    .clip-item:hover {
+      border-color: #4CAF50;
+      background-color: #303030;
+    }
+
+    .clip-info {
+      font-size: 14px;
+      margin-bottom: 6px;
+      color: #d0d0d0;
+    }
+
+    .clip-buttons {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .btn-small {
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .notification {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background-color: rgba(37, 37, 37, 0.95);
+      color: white;
+      padding: 14px 20px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 1000;
+      opacity: 0;
+      transition: all 0.3s ease;
+      border: 1px solid #444444;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+
+    .notification.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.7);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 2000;
+      display: none;
+      backdrop-filter: blur(4px);
+    }
+
+    .modal.show {
+      display: flex;
+    }
+
+    .modal-content {
+      background-color: #252525;
+      border-radius: 8px;
+      padding: 24px;
+      width: 450px;
+      max-width: 90%;
+      border: 1px solid #333333;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+
+    .modal h2 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 20px;
+      color: #f0f0f0;
+      text-align: center;
+    }
+
+    .form-group {
+      margin-bottom: 18px;
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #b0b0b0;
+    }
+
+    .form-group input,
+    .form-group textarea {
+      width: 100%;
+      padding: 10px;
+      background-color: #333333;
+      border: 1px solid #444444;
+      border-radius: 4px;
+      font-size: 14px;
+      color: #f0f0f0;
+      transition: border-color 0.2s ease;
+    }
+
+    .form-group input:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: #4CAF50;
+    }
+
+    .form-group textarea {
+      height: 100px;
+      resize: vertical;
+      font-family: inherit;
+    }
+
+    .modal-buttons {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    .btn-cancel {
+      background-color: #666666;
+      color: white;
+    }
+
+    .btn-cancel:hover {
+      background-color: #555555;
+    }
+
+    .btn-save {
+      background-color: #4CAF50;
+      color: white;
+    }
+
+    .btn-save:hover {
+      background-color: #45a049;
+    }
+
+    /* 滚动条样式 */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #252525;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #444444;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #555555;
+    }
+
+    /* 响应式设计 */
+    @media (max-width: 1024px) {
+      .main-content {
+        flex-direction: column;
+      }
+
+      .right-panel {
+        width: 100%;
+        max-height: 300px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>屏幕录制工具</h1>
+      <div class="controls">
+        <button class="btn btn-start" id="startRecord">开始录屏</button>
+        <button class="btn btn-pause" id="pauseRecord" disabled>暂停录屏</button>
+        <button class="btn btn-stop" id="stopRecord" disabled>结束录屏</button>
+        <button class="btn btn-edit" id="markProgress">标记进度</button>
+      </div>
+    </div>
+
+    <div class="main-content">
+      <div class="left-panel">
+        <div class="recording-area">
+          <div class="section-title">录屏区域设置</div>
+          <div class="area-selection">
+            <div class="area-inputs">
+              <div class="input-group">
+                <label>X坐标</label>
+                <input type="number" id="xCoord" value="0">
+              </div>
+              <div class="input-group">
+                <label>Y坐标</label>
+                <input type="number" id="yCoord" value="0">
+              </div>
+              <div class="input-group">
+                <label>宽度</label>
+                <input type="number" id="width" value="1080">
+              </div>
+              <div class="input-group">
+                <label>高度</label>
+                <input type="number" id="height" value="608">
+              </div>
+            </div>
+          </div>
+
+          <div class="section-title">视频预览</div>
+          <div class="video-preview">
+            <video class="video-element" id="videoPlayer" controls></video>
+          </div>
+
+          <div class="progress-container">
+            <div class="progress-bar" id="progressBar">
+              <div class="progress-fill" id="progressFill"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="right-panel">
+        <h3 class="panel-title">视频片段</h3>
+        <div class="clip-list" id="clipList">
+          <!-- 视频片段将在这里动态添加 -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notification" id="notification">
+    <span id="notificationText">已完成标记：1</span>
+    <button class="btn btn-edit btn-small" id="editMarkerBtn">编辑</button>
+  </div>
+
+  <div class="modal" id="markerModal">
+    <div class="modal-content">
+      <h2>编辑标记</h2>
+      <div class="form-group">
+        <label>标记名称</label>
+        <input type="text" id="markerName" placeholder="输入标记名称">
+      </div>
+      <div class="form-group">
+        <label>备注</label>
+        <textarea id="markerNote" placeholder="输入备注信息"></textarea>
+      </div>
+      <div class="modal-buttons">
+        <button class="btn btn-cancel" id="cancelEdit">取消</button>
+        <button class="btn btn-save" id="saveEdit">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 全局变量
+    let recorder = null;
+    let recording = false;
+    let paused = false;
+    let videoFile = null;
+    let markers = [];
+    let markerCount = 0;
+    let clips = [];
+    let clipStart = null;
+    let videoDuration = 0;
+
+    // DOM 元素
+    const startRecordBtn = document.getElementById('startRecord');
+    const pauseRecordBtn = document.getElementById('pauseRecord');
+    const stopRecordBtn = document.getElementById('stopRecord');
+    const markProgressBtn = document.getElementById('markProgress');
+    const videoPlayer = document.getElementById('videoPlayer');
+    const progressBar = document.getElementById('progressBar');
+    const progressFill = document.getElementById('progressFill');
+    const clipList = document.getElementById('clipList');
+    const notification = document.getElementById('notification');
+    const notificationText = document.getElementById('notificationText');
+    const editMarkerBtn = document.getElementById('editMarkerBtn');
+    const markerModal = document.getElementById('markerModal');
+    const markerName = document.getElementById('markerName');
+    const markerNote = document.getElementById('markerNote');
+    const cancelEdit = document.getElementById('cancelEdit');
+    const saveEdit = document.getElementById('saveEdit');
+    const xCoord = document.getElementById('xCoord');
+    const yCoord = document.getElementById('yCoord');
+    const width = document.getElementById('width');
+    const height = document.getElementById('height');
+
+    // 当前编辑的标记索引
+    let currentMarkerIndex = -1;
+
+    // 初始化
+    function init() {
+      // 绑定事件
+      startRecordBtn.addEventListener('click', startRecording);
+      pauseRecordBtn.addEventListener('click', pauseRecording);
+      stopRecordBtn.addEventListener('click', stopRecording);
+      markProgressBtn.addEventListener('click', markProgress);
+      videoPlayer.addEventListener('timeupdate', updateProgress);
+      progressBar.addEventListener('click', seekVideo);
+      editMarkerBtn.addEventListener('click', openMarkerEdit);
+      cancelEdit.addEventListener('click', closeMarkerEdit);
+      saveEdit.addEventListener('click', saveMarkerEdit);
+      videoPlayer.addEventListener('loadedmetadata', () => {
+        videoDuration = videoPlayer.duration;
+      });
+
+      // 初始化视频片段点击事件（用于截取视频）
+      progressBar.addEventListener('click', (e) => {
+        if (videoFile) {
+          handleClipSelection(e);
+        }
+      });
+    }
+
+    // 开始录屏
+    async function startRecording() {
+      try {
+        const { screen, desktopCapturer, remote } = require('electron');
+        const { writeFile } = require('fs');
+        const { dialog } = remote;
+
+        // 获取录屏区域
+        const x = parseInt(xCoord.value) || 0;
+        const y = parseInt(yCoord.value) || 0;
+        const w = parseInt(width.value) || 1080;
+        const h = parseInt(height.value) || 608;
+
+        // 获取屏幕流
+        const sources = await desktopCapturer.getSources({ types: ['screen'] });
+        const screenSource = sources[0];
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            mandatory: {
+              chromeMediaSource: 'desktop',
+              chromeMediaSourceId: screenSource.id,
+              minWidth: w,
+              maxWidth: w,
+              minHeight: h,
+              maxHeight: h,
+              minFrameRate: 30,
+              maxFrameRate: 30
+            }
+          }
+        });
+
+        // 创建录制器
+        recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+        const chunks = [];
+
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            chunks.push(e.data);
+          }
+        };
+
+        recorder.onstop = () => {
+          const blob = new Blob(chunks, { type: 'video/webm' });
+          const buffer = Buffer.from(await blob.arrayBuffer());
+
+          dialog.showSaveDialog({
+            defaultPath: `recording-${Date.now()}.webm`,
+            filters: [{ name: 'WebM Video', extensions: ['webm'] }]
+          }).then((result) => {
+            if (!result.canceled && result.filePath) {
+              writeFile(result.filePath, buffer, (err) => {
+                if (err) {
+                  console.error('保存视频失败:', err);
+                } else {
+                  videoFile = result.filePath;
+                  videoPlayer.src = videoFile;
+                  markers = [];
+                  markerCount = 0;
+                  clips = [];
+                  clipStart = null;
+                  updateMarkers();
+                  updateClips();
+                }
+              });
+            }
+          });
+
+          // 停止所有轨道
+          stream.getTracks().forEach(track => track.stop());
+        };
+
+        // 开始录制
+        recorder.start();
+        recording = true;
+        paused = false;
+
+        // 更新按钮状态
+        startRecordBtn.disabled = true;
+        pauseRecordBtn.disabled = false;
+        stopRecordBtn.disabled = false;
+        markProgressBtn.disabled = false;
+
+        console.log('开始录屏');
+      } catch (error) {
+        console.error('开始录屏失败:', error);
+      }
+    }
+
+    // 暂停录屏
+    function pauseRecording() {
+      if (recorder && recording) {
+        if (paused) {
+          recorder.resume();
+          pauseRecordBtn.textContent = '暂停录屏';
+        } else {
+          recorder.pause();
+          pauseRecordBtn.textContent = '继续录屏';
+        }
+        paused = !paused;
+      }
+    }
+
+    // 结束录屏
+    function stopRecording() {
+      if (recorder && recording) {
+        recorder.stop();
+        recording = false;
+
+        // 更新按钮状态
+        startRecordBtn.disabled = false;
+        pauseRecordBtn.disabled = true;
+        stopRecordBtn.disabled = true;
+        pauseRecordBtn.textContent = '暂停录屏';
+
+        console.log('结束录屏');
+      }
+    }
+
+    // 标记进度
+    function markProgress() {
+      if (recording || videoFile) {
+        const currentTime = videoFile ? videoPlayer.currentTime : Date.now();
+        const marker = {
+          id: markerCount + 1,
+          name: (markerCount + 1).toString(),
+          time: currentTime,
+          note: ''
+        };
+
+        markers.push(marker);
+        markerCount++;
+        updateMarkers();
+
+        // 显示通知
+        showNotification(`已完成标记：${markerCount}`);
+      }
+    }
+
+    // 更新标记
+    function updateMarkers() {
+      // 清除现有标记
+      const existingMarkers = document.querySelectorAll('.marker');
+      existingMarkers.forEach(marker => marker.remove());
+
+      // 添加新标记
+      markers.forEach((marker, index) => {
+        const markerElement = document.createElement('div');
+        markerElement.className = 'marker';
+
+        // 计算标记位置
+        let position;
+        if (videoFile && videoDuration > 0) {
+          position = (marker.time / videoDuration) * 100;
+        } else {
+          // 录制中，使用相对时间
+          position = 0; // 简化处理，实际应用中需要计算相对位置
+        }
+
+        markerElement.style.left = `${position}%`;
+
+        // 添加标记标签
+        const labelElement = document.createElement('div');
+        labelElement.className = 'marker-label';
+        labelElement.textContent = marker.name;
+        markerElement.appendChild(labelElement);
+
+        // 添加点击事件
+        markerElement.addEventListener('click', () => {
+          if (videoFile) {
+            videoPlayer.currentTime = marker.time;
+            currentMarkerIndex = index;
+          }
+        });
+
+        progressBar.appendChild(markerElement);
+      });
+    }
+
+    // 更新进度条
+    function updateProgress() {
+      if (videoFile && videoDuration > 0) {
+        const progress = (videoPlayer.currentTime / videoDuration) * 100;
+        progressFill.style.width = `${progress}%`;
+      }
+    }
+
+    // 视频跳转
+    function seekVideo(e) {
+      if (videoFile && videoDuration > 0) {
+        const rect = progressBar.getBoundingClientRect();
+        const pos = (e.clientX - rect.left) / rect.width;
+        const time = pos * videoDuration;
+        videoPlayer.currentTime = time;
+      }
+    }
+
+    // 处理视频截取选择
+    function handleClipSelection(e) {
+      if (videoFile) {
+        const rect = progressBar.getBoundingClientRect();
+        const pos = (e.clientX - rect.left) / rect.width;
+        const time = pos * videoDuration;
+
+        if (clipStart === null) {
+          // 开始截取
+          clipStart = time;
+        } else {
+          // 结束截取
+          const clipEnd = time;
+          if (clipStart < clipEnd) {
+            const clip = {
+              id: clips.length + 1,
+              start: clipStart,
+              end: clipEnd,
+              duration: clipEnd - clipStart
+            };
+            clips.push(clip);
+            updateClips();
+          }
+          clipStart = null;
+        }
+      }
+    }
+
+    // 更新视频片段列表
+    function updateClips() {
+      clipList.innerHTML = '';
+
+      clips.forEach(clip => {
+        const clipItem = document.createElement('div');
+        clipItem.className = 'clip-item';
+        clipItem.innerHTML = `
+          <div class="clip-info">片段 ${clip.id}</div>
+          <div class="clip-info">开始: ${formatTime(clip.start)}</div>
+          <div class="clip-info">结束: ${formatTime(clip.end)}</div>
+          <div class="clip-info">时长: ${formatTime(clip.duration)}</div>
+          <div class="clip-buttons">
+            <button class="btn btn-small btn-edit">播放</button>
+            <button class="btn btn-small btn-stop">删除</button>
+          </div>
+        `;
+        clipList.appendChild(clipItem);
+      });
+
+      // 绑定按钮事件
+      const playButtons = clipList.querySelectorAll('.btn-edit');
+      const deleteButtons = clipList.querySelectorAll('.btn-stop');
+
+      playButtons.forEach((button, index) => {
+        button.addEventListener('click', () => {
+          const clip = clips[index];
+          videoPlayer.currentTime = clip.start;
+          videoPlayer.play();
+        });
+      });
+
+      deleteButtons.forEach((button, index) => {
+        button.addEventListener('click', () => {
+          clips.splice(index, 1);
+          updateClips();
+        });
+      });
+    }
+
+    // 显示通知
+    function showNotification(message) {
+      notificationText.textContent = message;
+      notification.classList.add('show');
+
+      setTimeout(() => {
+        notification.classList.remove('show');
+      }, 3000);
+    }
+
+    // 打开标记编辑弹窗
+    function openMarkerEdit() {
+      if (markers.length > 0) {
+        const lastMarker = markers[markers.length - 1];
+        currentMarkerIndex = markers.length - 1;
+        markerName.value = lastMarker.name;
+        markerNote.value = lastMarker.note;
+        markerModal.classList.add('show');
+      }
+    }
+
+    // 关闭标记编辑弹窗
+    function closeMarkerEdit() {
+      markerModal.classList.remove('show');
+      currentMarkerIndex = -1;
+    }
+
+    // 保存标记编辑
+    function saveMarkerEdit() {
+      if (currentMarkerIndex >= 0 && currentMarkerIndex < markers.length) {
+        markers[currentMarkerIndex].name = markerName.value || markers[currentMarkerIndex].name;
+        markers[currentMarkerIndex].note = markerNote.value;
+        updateMarkers();
+        closeMarkerEdit();
+      }
+    }
+
+    // 格式化时间
+    function formatTime(seconds) {
+      const mins = Math.floor(seconds / 60);
+      const secs = Math.floor(seconds % 60);
+      return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    // 初始化应用
+    init();
+  </script>
+</body>
+</html>
