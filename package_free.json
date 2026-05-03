@@ -1,0 +1,12 @@
+{
+  "name": "screen-recorder",
+  "version": "1.0.0",
+  "description": "Screen recorder with progress marking and video clipping",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "electron": "^25.0.0"
+  }
+}
