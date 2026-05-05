@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+import numpy as np
 import pyautogui
 import cv2
-import numpy as np
 import threading
 import time
 import os
@@ -515,41 +515,6 @@ class ScreenRecorder:
                                 bg=self.card_bg, fg=self.text_color)
         version_label.pack()
         
-        # 版本检测按钮（圆角边框）
-        btn_container = tk.Frame(about_card, bg=self.card_bg, width=120, height=40)
-        btn_container.pack(pady=10)
-        btn_container.pack_propagate(False)
-        
-        btn_canvas = tk.Canvas(btn_container, bg=self.card_bg, highlightthickness=0, width=120, height=40)
-        btn_canvas.pack(fill=tk.BOTH, expand=True)
-        
-        check_version_btn = tk.Button(btn_canvas, text="版本检测",
-                                      command=self.check_version,
-                                      bg=self.card_bg, fg=self.text_color,
-                                      font=('Arial', 10),
-                                      relief='flat', padx=15, pady=5,
-                                      cursor='hand2')
-        btn_canvas.create_window(60, 20, window=check_version_btn)
-        
-        def draw_btn_rounded_bg(event=None):
-            btn_canvas.delete('rounded')
-            w = btn_canvas.winfo_width()
-            h = btn_canvas.winfo_height()
-            if w > 1 and h > 1:
-                r = 8
-                bw = 2
-                btn_canvas.create_arc(bw, bw, r*2-bw, r*2-bw, start=90, extent=90, fill='', outline='#888888', width=bw, tags='rounded')
-                btn_canvas.create_arc(w-r*2+bw, bw, w-bw, r*2-bw, start=0, extent=90, fill='', outline='#888888', width=bw, tags='rounded')
-                btn_canvas.create_arc(bw, h-r*2+bw, r*2-bw, h-bw, start=180, extent=90, fill='', outline='#888888', width=bw, tags='rounded')
-                btn_canvas.create_arc(w-r*2+bw, h-r*2+bw, w-bw, h-bw, start=270, extent=90, fill='', outline='#888888', width=bw, tags='rounded')
-                btn_canvas.create_line(r, bw, w-r, bw, fill='#888888', width=bw, tags='rounded')
-                btn_canvas.create_line(r, h-bw, w-r, h-bw, fill='#888888', width=bw, tags='rounded')
-                btn_canvas.create_line(bw, r, bw, h-r, fill='#888888', width=bw, tags='rounded')
-                btn_canvas.create_line(w-bw, r, w-bw, h-r, fill='#888888', width=bw, tags='rounded')
-        
-        btn_container.after(50, draw_btn_rounded_bg)
-        btn_canvas.bind('<Configure>', draw_btn_rounded_bg)
-        
         # 法律声明和用户协议区域
         link_frame = tk.Frame(about_card, bg=self.card_bg)
         link_frame.pack(pady=20)
@@ -583,10 +548,6 @@ class ScreenRecorder:
                                  bg=self.bg_color, fg=self.secondary_text,
                                  pady=20)
         copyright_label.pack()
-
-    def check_version(self):
-        """版本检测主入口"""
-        messagebox.showinfo("提示", "当前版本已是最新")
 
     def open_legal_notice(self):
         """打开法律声明"""
@@ -2055,6 +2016,9 @@ class ScreenRecorder:
         # 为旋钮添加标签并设置为置顶
         self.progress_canvas.addtag_withtag("progress_knob", knob_id)
         self.progress_canvas.tag_raise("progress_knob")
+        
+        # 同步更新缩略功能区的时间轴
+        self.update_mini_progress_bar()
     
     def update_progress(self):
         while not self.stop_update:
@@ -3991,7 +3955,7 @@ class ScreenRecorder:
         # 创建缩略功能区窗口 - 作为完全独立的窗口
         self.mini_window = tk.Toplevel()  # 不指定master，使其成为独立窗口
         self.mini_window.title("录屏控制")
-        self.mini_window.geometry("560x180")  # 增大窗口大小，确保能容纳所有内容
+        self.mini_window.geometry("560x280")  # 增大窗口高度，从180增加到280，以容纳时间轴
         self.mini_window.attributes('-topmost', True)  # 始终显示在最前面
         self.mini_window.attributes('-toolwindow', True)  # 工具窗口风格
         self.mini_window.configure(bg="#1a1a1a")  # 直接使用颜色值，避免依赖主窗口
@@ -3999,11 +3963,20 @@ class ScreenRecorder:
         self.mini_window.configure(relief='flat', borderwidth=0)
         
         # 固定在屏幕顶部
-        self.mini_window.geometry("560x180+50+50")
+        self.mini_window.geometry("560x280+50+50")
+        
+        # 创建时间轴容器
+        self.mini_timeline_frame = tk.Frame(self.mini_window, bg="#1a1a1a")
+        self.mini_timeline_frame.pack(fill=tk.X, pady=(10, 0), padx=20)
+        
+        # 创建缩略时间轴画布（与主页面时间轴保持一致的结构）
+        self.mini_progress_canvas = tk.Canvas(self.mini_timeline_frame, height=120, bg="#333", 
+                                              cursor="hand1", highlightthickness=0)
+        self.mini_progress_canvas.pack(fill=tk.X)
         
         # 创建控制按钮
         button_frame = tk.Frame(self.mini_window, bg="#1a1a1a")
-        button_frame.pack(fill=tk.X, pady=20, padx=20)  # 增加边距
+        button_frame.pack(fill=tk.X, pady=10, padx=20)  # 增加边距
         
         # 创建按钮
         self.mini_pause_btn = ttk.Button(button_frame, text="暂停录屏", command=self.pause_recording, width=10, takefocus=False)
@@ -4140,6 +4113,98 @@ class ScreenRecorder:
                 self.mini_window = None
             except:
                 pass
+        if hasattr(self, 'mini_progress_canvas'):
+            delattr(self, 'mini_progress_canvas')
+    
+    def update_mini_progress_bar(self):
+        """更新缩略功能区的时间轴（与主页面时间轴同步）"""
+        if not hasattr(self, 'mini_progress_canvas') or not self.mini_progress_canvas:
+            return
+        
+        try:
+            self.mini_progress_canvas.delete('all')
+        except:
+            return
+            
+        try:
+            width = self.mini_progress_canvas.winfo_width()
+            height = self.mini_progress_canvas.winfo_height()
+        except:
+            return
+            
+        if width == 0 or height == 0:
+            return
+        
+        padding = 20
+        usable_width = width - 2 * padding
+        
+        if self.video_duration > 0:
+            progress = self.current_time / self.video_duration
+        else:
+            progress = 0
+        
+        self.mini_progress_canvas.create_rectangle(0, 0, width, height, fill="#333", outline="")
+        
+        progress_bar_y = height - 30
+        progress_bar_height = 20
+        progress_width = int(usable_width * progress)
+        self.mini_progress_canvas.create_rectangle(padding, progress_bar_y, width - padding, progress_bar_y + progress_bar_height, fill="#444", outline="")
+        self.mini_progress_canvas.create_rectangle(padding, progress_bar_y, padding + progress_width, progress_bar_y + progress_bar_height, fill="#4CAF50", outline="")
+        
+        if self.recording or self.video_duration > 0:
+            max_marker_time = 0
+            if self.recording:
+                total_duration = self.current_time if self.current_time > 0 else 1
+            else:
+                max_marker_time = max([m["time"] for m in self.markers]) if self.markers else 0
+                if self.video_duration <= 0 or self.video_duration < max_marker_time:
+                    total_duration = max_marker_time if max_marker_time > 0 else 1
+                else:
+                    total_duration = self.video_duration
+            
+            if total_duration > 0:
+                for idx, marker in enumerate(self.markers):
+                    marker_time = marker["time"]
+                    if marker_time <= total_duration:
+                        marker_pos = padding + (marker_time / total_duration) * usable_width
+                        marker_pos = max(padding + 4, min(width - padding - 4, marker_pos))
+                        
+                        marker_name = marker.get("name", str(idx + 1))
+                        
+                        marker_pos_x = marker_pos
+                        marker_top = progress_bar_y - 20
+                        
+                        gourd_points = [
+                            marker_pos_x - 20, marker_top - 25,
+                            marker_pos_x - 10, marker_top - 30,
+                            marker_pos_x + 10, marker_top - 30,
+                            marker_pos_x + 20, marker_top - 25,
+                            marker_pos_x + 20, marker_top - 10,
+                            marker_pos_x + 14, marker_top - 5,
+                            marker_pos_x + 14, marker_top + 5,
+                            marker_pos_x + 6, marker_top + 10,
+                            marker_pos_x, marker_top + 20,
+                            marker_pos_x - 6, marker_top + 10,
+                            marker_pos_x - 14, marker_top + 5,
+                            marker_pos_x - 14, marker_top - 5,
+                            marker_pos_x - 20, marker_top - 10,
+                            marker_pos_x - 20, marker_top - 25,
+                        ]
+                        
+                        marker_id = self.mini_progress_canvas.create_polygon(
+                            gourd_points, fill="#ffeb3b", outline="#fbc02d", width=1
+                        )
+                        
+                        text_id = self.mini_progress_canvas.create_text(
+                            marker_pos_x, marker_top - 10,
+                            text=marker_name, fill="#000000", font=('Arial', 10, 'bold')
+                        )
+        
+        knob_x = padding + progress_width
+        knob_id = self.mini_progress_canvas.create_oval(
+            knob_x - 8, progress_bar_y - 5, knob_x + 8, progress_bar_y + progress_bar_height + 5,
+            fill="#fff", outline="#ddd", width=2
+        )
     
     def show_time_tooltip(self, x, y, time_seconds):
         """显示时间提示"""
