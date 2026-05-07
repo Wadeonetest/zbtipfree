@@ -54,10 +54,36 @@ except ImportError:
         def on_any_event(self, event):
             pass
 
+def set_window_icon(root):
+    """设置窗口图标（任务栏显示）"""
+    try:
+        # 判断是否为 PyInstaller 打包环境
+        if hasattr(sys, '_MEIPASS'):
+            # 打包后：从临时目录加载
+            icon_path = os.path.join(sys._MEIPASS, 'app_icon.ico')
+        else:
+            # 开发环境：从当前目录加载
+            icon_path = os.path.join(os.path.dirname(__file__), 'app_icon.ico')
+            
+        if os.path.exists(icon_path):
+            # 使用 PIL 加载图标并设置
+            icon_image = Image.open(icon_path)
+            icon_photo = ImageTk.PhotoImage(icon_image)
+            root.iconphoto(True, icon_photo)
+            # 保留引用防止被垃圾回收
+            root.icon_image = icon_photo
+        else:
+            print(f"图标文件不存在: {icon_path}")
+    except Exception as e:
+        print(f"设置窗口图标失败: {str(e)}")
+
 class ScreenRecorder:
     def __init__(self, root):
         self.root = root
         self.root.title("直播录屏标记助手")
+        
+        # 设置窗口图标（任务栏显示）
+        set_window_icon(self.root)
 
         # 获取屏幕大小的80%
         screen_width = root.winfo_screenwidth()
@@ -3961,6 +3987,26 @@ class ScreenRecorder:
         self.mini_window.configure(bg="#1a1a1a")  # 直接使用颜色值，避免依赖主窗口
         # 添加阴影效果（通过边框实现）
         self.mini_window.configure(relief='flat', borderwidth=0)
+        
+        # 设置缩略功能区窗口的图标
+        try:
+            # 判断是否为 PyInstaller 打包环境
+            if hasattr(sys, '_MEIPASS'):
+                # 打包后：从临时目录加载
+                icon_path = os.path.join(sys._MEIPASS, 'app_icon.ico')
+            else:
+                # 开发环境：从当前目录加载
+                icon_path = os.path.join(os.path.dirname(__file__), 'app_icon.ico')
+                
+            if os.path.exists(icon_path):
+                # 使用 PIL 加载图标并设置
+                icon_image = Image.open(icon_path)
+                icon_photo = ImageTk.PhotoImage(icon_image)
+                self.mini_window.iconphoto(True, icon_photo)
+                # 保留引用防止被垃圾回收
+                self.mini_window.icon_image = icon_photo
+        except Exception as e:
+            print(f"设置缩略功能区窗口图标失败: {str(e)}")
         
         # 固定在屏幕顶部
         self.mini_window.geometry("560x280+50+50")
