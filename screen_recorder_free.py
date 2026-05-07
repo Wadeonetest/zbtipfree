@@ -151,28 +151,58 @@ class ScreenRecorder:
         self.mini_mark_btn = None
         self.mini_status_label = None
         
-        # 目录相关变量
-        self.recordings_dir = "recordings"  # 文件夹X
+        # 目录相关变量 - 使用用户文档目录确保权限
+        user_documents = os.path.expanduser("~/Documents")
+        self.app_data_dir = os.path.join(user_documents, "LiveRecorder")  # 应用数据根目录
+        self.recordings_dir = os.path.join(self.app_data_dir, "recordings")  # 录制目录
         self.current_session_dir = None  # 当前录制会话目录
         self.clip_dir = "截取视频"  # 截取视频文件夹
-        self.video_library_dir = "视频资料库"  # 独立的视频资料库目录
+        self.video_library_dir = os.path.join(self.app_data_dir, "视频资料库")  # 独立的视频资料库目录
         
         # 确保目录存在
         self.ensure_directories()
 
         self.create_ui()
         
+        # 显示保存位置提示
+        print("=" * 60)
+        print(f"[启动] 应用数据目录: {self.app_data_dir}")
+        print(f"[启动] 录制保存目录: {self.recordings_dir}")
+        print("=" * 60)
+        
         # 启动文件系统监控
         self.start_file_monitor()
     
     def ensure_directories(self):
-        """确保必要的目录存在"""
-        # 确保recordings目录存在
-        if not os.path.exists(self.recordings_dir):
-            os.makedirs(self.recordings_dir)
-        # 确保视频资料库目录存在
-        if not os.path.exists(self.video_library_dir):
-            os.makedirs(self.video_library_dir)
+        """确保必要的目录存在 - 使用用户文档目录确保权限"""
+        try:
+            # 确保应用数据根目录存在
+            if not os.path.exists(self.app_data_dir):
+                os.makedirs(self.app_data_dir)
+                print(f"[目录] 创建应用数据目录: {self.app_data_dir}")
+            
+            # 确保recordings目录存在
+            if not os.path.exists(self.recordings_dir):
+                os.makedirs(self.recordings_dir)
+                print(f"[目录] 创建录制目录: {self.recordings_dir}")
+            
+            # 确保视频资料库目录存在
+            if not os.path.exists(self.video_library_dir):
+                os.makedirs(self.video_library_dir)
+                print(f"[目录] 创建视频资料库: {self.video_library_dir}")
+                
+        except Exception as e:
+            print(f"[错误] 创建目录失败: {e}")
+            print(f"[信息] 尝试使用临时目录作为备用")
+            import tempfile
+            self.app_data_dir = os.path.join(tempfile.gettempdir(), "LiveRecorder")
+            self.recordings_dir = os.path.join(self.app_data_dir, "recordings")
+            self.video_library_dir = os.path.join(self.app_data_dir, "视频资料库")
+            if not os.path.exists(self.recordings_dir):
+                os.makedirs(self.recordings_dir)
+            if not os.path.exists(self.video_library_dir):
+                os.makedirs(self.video_library_dir)
+            print(f"[备用] 使用临时目录: {self.app_data_dir}")
     
     def start_file_monitor(self):
         """启动文件系统监控"""
@@ -975,23 +1005,12 @@ class ScreenRecorder:
         
         # 设置视频文件路径
         timestamp = time.strftime('%Y%m%d_%H%M%S')
-        # 获取应用程序所在目录
-        if getattr(sys, 'frozen', False):
-            # 打包后
-            if hasattr(sys, '_MEIPASS'):
-                # PyInstaller单文件模式
-                current_dir = os.path.dirname(sys.executable)
-            else:
-                # 其他打包模式（如MSIX）
-                current_dir = os.path.dirname(sys.executable)
-        else:
-            # 未打包
-            current_dir = os.path.dirname(os.path.abspath(__file__))
         
-        # 创建会话目录
-        self.current_session_dir = os.path.join(current_dir, self.recordings_dir, timestamp)
+        # 创建会话目录 - 使用用户文档目录确保权限
+        self.current_session_dir = os.path.join(self.recordings_dir, timestamp)
         if not os.path.exists(self.current_session_dir):
             os.makedirs(self.current_session_dir)
+            print(f"[录制] 创建会话目录: {self.current_session_dir}")
         
         # 创建截取视频文件夹
         clip_folder = os.path.join(self.current_session_dir, self.clip_dir)
@@ -1020,7 +1039,7 @@ class ScreenRecorder:
         self.stop_update = False
         self.update_thread.daemon = True
         self.update_thread.start()
-        self.recorder = cv2.VideoWriter(self.video_file, cv2.VideoWriter_fourcc(*'XVID'), 20.0, (self.width, self.height))
+        self.recorder = cv2.VideoWriter(self.video_file, cv2.VideoWriter_fourcc(*'XVID'), 10.0, (self.width, self.height))
         self.record_thread = threading.Thread(target=self.record_screen)
         self.record_thread.daemon = True
         self.record_thread.start()
@@ -1648,35 +1667,78 @@ class ScreenRecorder:
         self.clip_btn.config(state=tk.NORMAL)
     
     def record_screen(self):
+        frame_interval = 1.0 / 10.0  # 10 FPS = 每帧100ms
+        next_frame_time = time.time()
+        frame_count = 0
+        start_time = time.time()
+        
         while self.recording:
             if not self.paused:
+                frame_start = time.time()
+                
                 screenshot = pyautogui.screenshot(region=(self.x, self.y, self.width, self.height))
                 frame = np.array(screenshot)
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                 self.recorder.write(frame)
                 self.recorded_frames += 1
-                time.sleep(0.05)
+                frame_count += 1
+                
+                frame_write_time = time.time() - frame_start
+                
+                # 移动到下一帧的目标时间
+                next_frame_time += frame_interval
+                
+                # 等待到目标时间（如果还没到）
+                current_time = time.time()
+                sleep_time = next_frame_time - current_time
+                
+                if frame_count <= 100 or frame_count % 100 == 0:  # 前100帧和每100帧打印一次
+                    elapsed_total = current_time - start_time
+                    actual_fps = frame_count / elapsed_total if elapsed_total > 0 else 0
+                    print(f"[录帧] #{frame_count:4d} | 写帧:{frame_write_time*1000:.1f}ms | 等待:{max(0, sleep_time)*1000:.1f}ms | 实际FPS:{actual_fps:.2f} | total:{elapsed_total:.1f}s")
+                
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
             else:
-                # 每次暂停时都更新 pause_start_time
-                self.pause_start_time = time.time()
+                # 暂停时重置下一帧时间基准
+                next_frame_time = time.time()
                 time.sleep(0.1)
     
     def save_markers_to_file(self):
         """保存标记信息到会话目录的JSON文件（包含工具校验码）"""
         if not self.current_session_dir:
+            print("[保存] 跳过：当前会话目录为空")
             return
         
         markers_file = os.path.join(self.current_session_dir, "markers.json")
         try:
+            # 先测试目录是否可写
+            test_file = os.path.join(self.current_session_dir, ".test_write")
+            with open(test_file, 'w') as f:
+                f.write("test")
+            os.remove(test_file)
+            print(f"[保存] 目录可写: {self.current_session_dir}")
+            
             data = {
                 "tool_signature": "live_recorder_marker_tool_v1",
                 "markers": self.markers
             }
             with open(markers_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            print(f"标记已保存到: {markers_file}")
+            print(f"[保存] 标记已保存到: {markers_file}")
+            print(f"[保存] 标记数量: {len(self.markers)}")
+            
+            # 验证文件是否真的存在
+            if os.path.exists(markers_file):
+                file_size = os.path.getsize(markers_file)
+                print(f"[保存] 文件大小: {file_size} 字节")
+            else:
+                print(f"[警告] 文件创建后不存在！")
+                
         except Exception as e:
-            print(f"保存标记失败: {e}")
+            print(f"[错误] 保存标记失败: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
     
     def load_markers_from_file(self):
         """从会话目录的JSON文件加载标记信息（兼容新旧格式）"""
@@ -2051,8 +2113,8 @@ class ScreenRecorder:
             if self.recording:
                 # 录屏时：根据实际录制帧数计算时间，确保与视频时长一致
                 if not self.paused:
-                    # 使用实际录制帧数计算时间（20fps）
-                    self.current_time = self.recorded_frames / 20.0
+                    # 使用实际录制帧数计算时间
+                    self.current_time = self.recorded_frames / 10.0
             elif self.video_duration > 0 and self.video_playing and not self.progress_bar_dragging:
                 if not self.video_paused:
                     self.current_time += 0.1
