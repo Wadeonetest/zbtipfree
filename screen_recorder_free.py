@@ -1138,15 +1138,41 @@ class ScreenRecorder:
     
     def open_video_location(self):
         """打开视频文件所在的目录并选中该文件"""
-        if not self.video_file or not os.path.exists(self.video_file):
+        print(f"[DEBUG] open_video_location() called")
+        print(f"[DEBUG] self.video_file = {self.video_file}")
+        
+        if not self.video_file:
+            print("[DEBUG] video_file is None")
             return
+        
+        print(f"[DEBUG] video_file exists: {os.path.exists(self.video_file)}")
+        
+        if not os.path.exists(self.video_file):
+            print(f"[DEBUG] 视频文件不存在")
+            # 尝试打开目录
+            video_dir = os.path.dirname(self.video_file)
+            if os.path.exists(video_dir):
+                print(f"[DEBUG] 打开目录: {video_dir}")
+                if os.name == 'nt':
+                    os.startfile(video_dir)
+                return
+            else:
+                self.show_notification("无法定位视频文件", is_weak=True)
+                return
         
         try:
             # 打开目录并选中文件
             if os.name == 'nt':  # Windows
-                # 使用 explorer.exe /select 命令选中文件
-                import subprocess
-                subprocess.run(['explorer.exe', '/select,', self.video_file])
+                # 使用 explorer.exe 打开目录并选中文件
+                video_file_normalized = os.path.normpath(self.video_file)
+                video_dir = os.path.dirname(video_file_normalized)
+                try:
+                    import subprocess
+                    cmd = f'explorer.exe /select,"{video_file_normalized}"'
+                    subprocess.run(cmd, shell=True, check=True)
+                except Exception as e:
+                    # 回退方案：只打开目录
+                    os.startfile(video_dir)
             elif os.name == 'posix':  # macOS/Linux
                 if 'darwin' in sys.platform:  # macOS
                     import subprocess
@@ -1170,74 +1196,109 @@ class ScreenRecorder:
     
     def open_clip_location(self):
         """打开选中片段所在的目录并选中该文件"""
+        print(f"[DEBUG] open_clip_location() called")
+        print(f"[DEBUG] self.current_session_dir = {self.current_session_dir}")
+        
         if not self.current_session_dir:
+            print("[DEBUG] current_session_dir is None")
             return
         
         try:
             # 获取截取视频文件夹
             clip_dir = os.path.join(self.current_session_dir, self.clip_dir)
-            # 确保目录存在
-            if not os.path.exists(clip_dir):
-                os.makedirs(clip_dir)
+            print(f"[DEBUG] clip_dir = {clip_dir}")
             
             # 获取选中的片段
             selected_index = self.clip_listbox.curselection()
+            print(f"[DEBUG] selected_index = {selected_index}")
+            
             if selected_index:
-                # 构建选中片段的文件路径
                 clip_index = selected_index[0]
                 if clip_index < len(self.clips):
                     clip = self.clips[clip_index]
-                    # 检查片段是否有文件夹名称（新结构）
-                    if 'folder_name' in clip:
+                    print(f"[DEBUG] clip = {clip}")
+                    
+                    # 构建选中片段的文件路径
+                    if 'folder_name' in clip and clip['folder_name']:
                         # 新结构：片段在单独的文件夹中
                         clip_folder = os.path.join(clip_dir, clip['folder_name'])
                         clip_file = os.path.join(clip_folder, "clip.avi")
+                        print(f"[DEBUG] 新结构 - clip_folder = {clip_folder}")
+                        print(f"[DEBUG] clip_file = {clip_file}")
                     else:
                         # 旧结构：直接在截取视频文件夹中
                         clip_id = clip.get('id', clip_index + 1)
                         if 'name' in clip and clip['name']:
                             clip_file = os.path.join(clip_dir, f"{clip['name']}.avi")
                         else:
-                            # 获取当前视频的文件名（不含路径和后缀）
                             video_filename = ""
                             if self.video_file:
                                 basename = os.path.basename(self.video_file)
                                 video_filename = os.path.splitext(basename)[0] + "_"
-                            # 使用与显示名称一致的格式
                             clip_file = os.path.join(clip_dir, f"{video_filename}片段 {clip_id}.avi")
+                        print(f"[DEBUG] 旧结构 - clip_file = {clip_file}")
                     
-                    # 打开目录并选中文件
+                    # 检查文件是否存在
+                    print(f"[DEBUG] clip_file exists: {os.path.exists(clip_file)}")
+                    
+                    # 尝试打开文件所在目录并选中文件
                     if os.path.exists(clip_file):
-                        if os.name == 'nt':  # Windows
-                            import subprocess
-                            subprocess.run(['explorer.exe', '/select,', clip_file])
-                        elif os.name == 'posix':  # macOS/Linux
-                            if 'darwin' in sys.platform:  # macOS
+                        if os.name == 'nt':
+                            # 标准化路径格式，确保使用反斜杠
+                            clip_file_normalized = os.path.normpath(clip_file)
+                            # 获取文件所在目录
+                            clip_dir = os.path.dirname(clip_file_normalized)
+                            print(f"[DEBUG] 尝试打开目录并选中文件: {clip_file_normalized}")
+                            try:
+                                # 使用 explorer.exe 打开目录并选中文件
+                                import subprocess
+                                # 使用 shell=True 和正确的命令格式
+                                cmd = f'explorer.exe /select,"{clip_file_normalized}"'
+                                subprocess.run(cmd, shell=True, check=True)
+                                print("[DEBUG] explorer.exe 执行成功")
+                            except Exception as e:
+                                print(f"[DEBUG] explorer.exe 失败: {e}")
+                                # 回退方案：只打开目录
+                                print(f"[DEBUG] 回退到打开目录: {clip_dir}")
+                                os.startfile(clip_dir)
+                        elif os.name == 'posix':
+                            if 'darwin' in sys.platform:
                                 import subprocess
                                 subprocess.run(['open', '-R', clip_file])
-                            else:  # Linux
-                                # 尝试使用常见的文件管理器
+                            else:
                                 import subprocess
                                 try:
-                                    # 尝试 Nautilus (GNOME)
                                     subprocess.run(['nautilus', '--select', clip_file])
                                 except FileNotFoundError:
                                     try:
-                                        # 尝试 Dolphin (KDE)
                                         subprocess.run(['dolphin', '--select', clip_file])
                                     except FileNotFoundError:
-                                        # 尝试 Thunar (Xfce)
                                         subprocess.run(['thunar', '--select', clip_file])
                         return
+                    else:
+                        # 文件不存在，尝试打开包含文件夹
+                        if 'folder_name' in clip and clip['folder_name']:
+                            clip_folder = os.path.join(clip_dir, clip['folder_name'])
+                            if os.path.exists(clip_folder):
+                                print(f"[DEBUG] 文件不存在，打开文件夹: {clip_folder}")
+                                if os.name == 'nt':
+                                    os.startfile(clip_folder)
+                                else:
+                                    import subprocess
+                                    subprocess.call(['open', clip_folder])
+                                return
             
-            # 如果没有选中片段或片段文件不存在，只打开目录
-            if os.name == 'nt':  # Windows
+            # 如果没有选中片段或文件不存在，打开截取视频目录
+            print(f"[DEBUG] 打开截取视频目录: {clip_dir}")
+            if os.name == 'nt':
                 os.startfile(clip_dir)
-            else:  # macOS/Linux
+            else:
                 import subprocess
                 subprocess.call(['open', clip_dir])
         except Exception as e:
             print(f"打开文件位置失败: {e}")
+            import traceback
+            traceback.print_exc()
             self.show_notification("打开文件位置失败", is_weak=True)
     
     def rename_selected_clip(self):
@@ -1257,7 +1318,7 @@ class ScreenRecorder:
         # 创建重命名窗口
         rename_window = tk.Toplevel(self.root)
         rename_window.title("重命名片段")
-        rename_window.geometry("400x150")
+        rename_window.geometry("400x195")
         rename_window.configure(bg=self.card_bg)
         rename_window.resizable(False, False)
         rename_window.attributes('-topmost', True)
@@ -1267,8 +1328,8 @@ class ScreenRecorder:
         screen_width = rename_window.winfo_screenwidth()
         screen_height = rename_window.winfo_screenheight()
         x = (screen_width - 400) // 2
-        y = (screen_height - 150) // 2
-        rename_window.geometry(f"400x150+{x}+{y}")
+        y = (screen_height - 195) // 2
+        rename_window.geometry(f"400x195+{x}+{y}")
         
         # 当前名称
         if 'name' in clip and clip['name']:
@@ -1433,7 +1494,7 @@ class ScreenRecorder:
         # 创建弹窗
         rename_window = tk.Toplevel(self.root)
         rename_window.title("修改文件名")
-        rename_window.geometry("400x150")
+        rename_window.geometry("400x195")
         rename_window.configure(bg=self.card_bg)
         rename_window.resizable(False, False)
         rename_window.attributes('-topmost', True)
@@ -1443,8 +1504,8 @@ class ScreenRecorder:
         screen_width = rename_window.winfo_screenwidth()
         screen_height = rename_window.winfo_screenheight()
         x = (screen_width - 400) // 2
-        y = (screen_height - 150) // 2
-        rename_window.geometry(f"400x150+{x}+{y}")
+        y = (screen_height - 195) // 2
+        rename_window.geometry(f"400x195+{x}+{y}")
         
         # 当前文件名
         current_filename = os.path.basename(self.video_file)
@@ -2262,7 +2323,7 @@ class ScreenRecorder:
                                         clip_path
                                     ]
                                     
-                                    result = subprocess.run(cmd, capture_output=True, text=True)
+                                    result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
                                     if result.returncode != 0:
                                         print(f"FFmpeg copy模式失败，错误信息: {result.stderr}")
                                         # 如果copy模式失败，尝试重新编码模式
@@ -2277,7 +2338,7 @@ class ScreenRecorder:
                                             '-c:a', 'aac',
                                             clip_path
                                         ]
-                                        result = subprocess.run(cmd_reencode, capture_output=True, text=True)
+                                        result = subprocess.run(cmd_reencode, capture_output=True, text=True, encoding='utf-8', errors='replace')
                                         if result.returncode != 0:
                                             print(f"FFmpeg reencode模式也失败: {result.stderr}")
                                     
