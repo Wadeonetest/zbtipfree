@@ -112,6 +112,17 @@ class ScreenRecorder:
         self.merging_in_progress = False  # 合并任务是否正在进行中
         self.merge_completed = False  # 合并任务是否已完成
         
+        # 音频相关属性（预先初始化，防止导入失败时出现AttributeError）
+        self._audio = None
+        self._audio_format = None
+        self._audio_channels = 2  # 默认双声道
+        self._audio_chunk = 1024  # 默认块大小
+        self._audio_rate = 44100  # 默认采样率
+        self._audio_stream = None
+        self._audio_use_silent = False  # 是否使用静音模式
+        self._audio_chunks_with_pts = []
+        self._audio_total_paused_time = 0.0
+        
         # 音视频同步时间基准变量
         self.playback_base_sec = 0.0
         self.play_start_tick = 0
@@ -1212,9 +1223,16 @@ class ScreenRecorder:
         self.update_thread.start()
 
         # 启动视频录制线程
-        self.record_thread = threading.Thread(target=self.record_screen)
-        self.record_thread.daemon = True
-        self.record_thread.start()
+        print("[录屏] 准备启动视频录制线程...")
+        try:
+            self.record_thread = threading.Thread(target=self.record_screen)
+            self.record_thread.daemon = True
+            self.record_thread.start()
+            print("[录屏] 视频录制线程已启动")
+        except Exception as e:
+            print(f"[录屏] 启动视频录制线程失败: {e}")
+            import traceback
+            print(f"[录屏] 异常堆栈: {traceback.format_exc()}")
 
         # 启动音频录制线程
         self.audio_thread = threading.Thread(target=self._record_audio_thread)
@@ -1287,11 +1305,22 @@ class ScreenRecorder:
 
         # 等待录屏线程结束（现在重编码已移到后台，不需要等待30秒）
         if hasattr(self, 'record_thread') and self.record_thread:
+            print("[录制] 等待录屏线程结束...")
             self.record_thread.join(timeout=2)
+            print("[录制] 录屏线程已结束")
 
         # 等待音频线程结束
         if hasattr(self, 'audio_thread') and self.audio_thread:
+            print("[录制] 等待音频线程结束...")
             self.audio_thread.join(timeout=2)
+            print("[录制] 音频线程已结束")
+        
+        # 检查录制线程是否正确设置了 _recorded_frames
+        print(f"[录制] 检查 _recorded_frames: hasattr={hasattr(self, '_recorded_frames')}, len={len(self._recorded_frames) if hasattr(self, '_recorded_frames') else 'N/A'}")
+        
+        # 如果 _recorded_frames 不存在，尝试重新录制最后一帧作为替代
+        if not hasattr(self, '_recorded_frames') or not self._recorded_frames:
+            print("[录制] 警告：_recorded_frames 为空或不存在！")
         
         # 记录录制结束时间（用于音频时长计算）
         if hasattr(self, '_master_clock_start'):
@@ -1356,13 +1385,21 @@ class ScreenRecorder:
             print("[后台处理] 开始异步处理视频...")
             
             # 步骤1：视频重编码（如果有未处理的帧）
+            print(f"[后台处理] 检查 _recorded_frames: hasattr={hasattr(self, '_recorded_frames')}, exists={self._recorded_frames if hasattr(self, '_recorded_frames') else 'N/A'}, len={len(self._recorded_frames) if hasattr(self, '_recorded_frames') and self._recorded_frames else 0}")
             if hasattr(self, '_recorded_frames') and self._recorded_frames:
                 print("[后台处理] 开始视频重编码...")
-                self._encode_video_from_frames(self._recorded_frames, self._pending_timestamps)
-                # 清理临时数据
-                delattr(self, '_recorded_frames')
-                delattr(self, '_pending_timestamps')
-                print("[后台处理] 视频重编码完成")
+                try:
+                    self._encode_video_from_frames(self._recorded_frames, self._pending_timestamps)
+                    # 清理临时数据
+                    delattr(self, '_recorded_frames')
+                    delattr(self, '_pending_timestamps')
+                    print("[后台处理] 视频重编码完成")
+                except Exception as e:
+                    print(f"[后台处理] 视频重编码失败: {e}")
+                    import traceback
+                    print(f"[后台处理] 重编码异常堆栈: {traceback.format_exc()}")
+            else:
+                print("[后台处理] 没有需要重编码的帧，跳过重编码")
             
             # 步骤2：音视频合并
             print("[后台处理] 开始音视频合并...")
@@ -2078,6 +2115,7 @@ class ScreenRecorder:
         self.clip_btn.config(state=tk.NORMAL)
     
     def record_screen(self):
+        print("[录制] record_screen 函数开始执行")
         target_fps = 30.0  # 目标帧率，仅用于控制录制节奏
         frame_interval = 1.0 / target_fps
         next_frame_time = time.perf_counter()
@@ -2087,47 +2125,60 @@ class ScreenRecorder:
         recorded_frames = []  # 保存所有帧
         
         # 优化：使用mss截图（比pyautogui快3-5倍）
-        import mss
-        with mss.mss() as sct:
-            monitor = {"left": self.x, "top": self.y, "width": self.width, "height": self.height}
-            
-            while self.recording:
-                if not self.paused:
-                    frame_start_time = time.perf_counter()
-                    
-                    # 使用mss截图（比pyautogui快3-5倍）
-                    sct_img = sct.grab(monitor)
-                    
-                    # mss返回的是BGRA格式，正确转换为BGR格式
-                    frame = np.array(sct_img)
-                    frame = frame[:, :, :3]  # 去掉alpha通道，得到BGR
-                    
-                    # 保存帧而不是直接写入
-                    recorded_frames.append(frame.copy())
-                    
-                    pts = frame_start_time - self._master_clock_start
-                    video_timestamps.append((frame_count, pts, frame_start_time))
-
-                    self.recorded_frames += 1
-                    frame_count += 1
-
-                    next_frame_time += frame_interval
-
-                    current_time = time.perf_counter()
-                    sleep_time = next_frame_time - current_time
-
-                    if sleep_time > 0:
-                        time.sleep(sleep_time)
-                else:
-                    next_frame_time = time.perf_counter()
-                    time.sleep(0.05)  # 暂停时减少sleep时间，更快响应恢复
-
-        self._video_timestamps = video_timestamps
-        self._save_video_timestamps()
+        try:
+            import mss
+            print("[录制] 成功导入 mss 模块")
+        except Exception as e:
+            print(f"[录制] 导入 mss 失败: {e}")
+            return
         
-        # 将重编码放到后台线程执行，让录制线程尽快结束
-        self._recorded_frames = recorded_frames
-        self._pending_timestamps = video_timestamps
+        try:
+            with mss.mss() as sct:
+                print("[录制] 成功创建 mss 对象")
+                monitor = {"left": self.x, "top": self.y, "width": self.width, "height": self.height}
+                
+                while self.recording:
+                    if not self.paused:
+                        frame_start_time = time.perf_counter()
+                        
+                        # 使用mss截图（比pyautogui快3-5倍）
+                        sct_img = sct.grab(monitor)
+                        
+                        # mss返回的是BGRA格式，正确转换为BGR格式
+                        frame = np.array(sct_img)
+                        frame = frame[:, :, :3]  # 去掉alpha通道，得到BGR
+                        
+                        # 保存帧而不是直接写入
+                        recorded_frames.append(frame.copy())
+                        
+                        pts = frame_start_time - self._master_clock_start
+                        video_timestamps.append((frame_count, pts, frame_start_time))
+
+                        self.recorded_frames += 1
+                        frame_count += 1
+
+                        next_frame_time += frame_interval
+
+                        current_time = time.perf_counter()
+                        sleep_time = next_frame_time - current_time
+
+                        if sleep_time > 0:
+                            time.sleep(sleep_time)
+                    else:
+                        next_frame_time = time.perf_counter()
+                        time.sleep(0.05)  # 暂停时减少sleep时间，更快响应恢复
+            
+            self._video_timestamps = video_timestamps
+            self._save_video_timestamps()
+            
+            # 将重编码放到后台线程执行，让录制线程尽快结束
+            self._recorded_frames = recorded_frames
+            self._pending_timestamps = video_timestamps
+            print(f"[录制] 成功保存 {len(recorded_frames)} 帧")
+        except Exception as e:
+            print(f"[录制] mss截图失败: {e}")
+            import traceback
+            print(f"[录制] 异常堆栈: {traceback.format_exc()}")
     
     def _encode_video_from_frames(self, frames, timestamps):
         """按时间戳重新编码视频，保证时长正确"""
@@ -4020,11 +4071,12 @@ class ScreenRecorder:
                 '-ac', '2',
                 temp_audio_file
             ]
-            
+
             result = subprocess.run(cmd, capture_output=True, text=True)
+
             if result.returncode == 0:
                 print(f"[音频] 成功提取音频到: {temp_audio_file}")
-                
+
                 # 初始化pygame音频
                 try:
                     import pygame as pygame_module
