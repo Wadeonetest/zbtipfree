@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
+import numpy as np
+import cv2
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import pyautogui
-import cv2
-import numpy as np
 import threading
 import time
 import os
@@ -2214,7 +2214,6 @@ class ScreenRecorder:
             print(f"[重编码] 无法创建重编码输出文件")
             return
         
-        import numpy as np
         target_pts = np.linspace(first_pts, last_pts, target_frames)
         
         print(f"[重编码] 目标时间戳范围: {target_pts[0]:.2f} ~ {target_pts[-1]:.2f}")
@@ -4077,16 +4076,25 @@ class ScreenRecorder:
             if result.returncode == 0:
                 print(f"[音频] 成功提取音频到: {temp_audio_file}")
 
-                # 初始化pygame音频
+                # 初始化pygame音频（修复无控制台模式下的问题）
                 try:
+                    # 关键：在导入pygame之前设置虚拟驱动
+                    os.environ['SDL_VIDEODRIVER'] = 'dummy'
+                    
                     import pygame as pygame_module
                     pygame = pygame_module
-                    pygame.mixer.init()
+                    
+                    # 初始化pygame（先视频模块，创建隐藏窗口）
+                    pygame.init()
+                    screen = pygame.display.set_mode((1, 1), pygame.NOFRAME)
+                    
+                    # 初始化音频
+                    if not pygame.mixer.get_init():
+                        pygame.mixer.init()
+                    
                     pygame.mixer.music.load(temp_audio_file)
                     audio_available = True
                     print("[音频] pygame音频加载成功")
-                    # 不初始化display也能使用mixer，但不能使用event
-                    # 使用get_busy()检测音频是否播放完毕
                 except Exception as e:
                     print(f"[音频] pygame加载失败: {e}")
             else:
