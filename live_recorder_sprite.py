@@ -81,6 +81,13 @@ class ScreenRecorder:
         self.root.resizable(True, True)
         self.recording = False
         self.paused = False
+        
+        # 音频录制线程安全机制
+        import threading
+        self.audio_lock = threading.Lock()
+        self.audio_frames = []         # 存储所有音频数据块
+        self.audio_total_written = 0
+        self.audio_total_read = 0
         self.recorder = None
         self.video_file = None
         self.markers = []
@@ -109,6 +116,7 @@ class ScreenRecorder:
         self.progress_knob_id = None
         self.progress_bar_dragging = False
         self.video_lock = threading.Lock()  # 视频操作锁，防止多线程冲突
+        self.seek_occurred = False  # seek 标志，用于播放线程重置 frame_count
         self.merging_in_progress = False  # 合并任务是否正在进行中
         self.merge_completed = False  # 合并任务是否已完成
         
@@ -1437,6 +1445,7 @@ class ScreenRecorder:
         """检查并恢复未完成的合并任务（扫描所有录制文件夹）"""
         base_dir = os.path.dirname(os.path.abspath(__file__))
         recordings_base = os.path.join(base_dir, self.recordings_dir)
+        found_states = []
         
         # 检查当前会话
         if hasattr(self, 'current_session_dir') and self.current_session_dir:
@@ -1445,8 +1454,9 @@ class ScreenRecorder:
                 try:
                     with open(state_file, 'r', encoding='utf-8') as f:
                         state = json.load(f)
-                    print(f"[状态] 检测到未完成的合并任务: {state}")
-                    return state
+                    # 验证状态文件有效性
+                    if self._validate_merge_state(state, state_file):
+                        found_states.append((state, state_file))
                 except Exception as e:
                     print(f"[状态] 加载状态失败: {e}")
                     if os.path.exists(state_file):
@@ -1463,8 +1473,9 @@ class ScreenRecorder:
                             try:
                                 with open(state_file, 'r', encoding='utf-8') as f:
                                     state = json.load(f)
-                                print(f"[状态] 检测到未完成的合并任务: {state}")
-                                return state
+                                # 验证状态文件有效性
+                                if self._validate_merge_state(state, state_file):
+                                    found_states.append((state, state_file))
                             except Exception as e:
                                 print(f"[状态] 加载状态失败: {e}")
                                 if os.path.exists(state_file):
@@ -1472,38 +1483,146 @@ class ScreenRecorder:
             except Exception as e:
                 print(f"[状态] 扫描录制文件夹失败: {e}")
         
+        if found_states:
+            # 返回第一个有效的状态（带状态文件路径）
+            state, state_file = found_states[0]
+            print(f"[状态] 检测到未完成的合并任务: {state}")
+            return state
+        
         return None
+    
+    def _validate_merge_state(self, state, state_file):
+        """验证合并状态是否有效，无效则删除状态文件"""
+        # 检查必需字段
+        required_fields = ["video_file", "video_file_no_audio", "audio_file", "session_dir"]
+        for field in required_fields:
+            if field not in state:
+                print(f"[状态] 状态文件缺少字段 {field}，删除无效状态")
+                os.remove(state_file)
+                return False
+        
+        # 检查文件是否存在
+        if not os.path.exists(state["video_file_no_audio"]):
+            print(f"[状态] 无音频视频文件不存在: {state['video_file_no_audio']}，删除无效状态")
+            os.remove(state_file)
+            return False
+        
+        if not os.path.exists(state["audio_file"]):
+            print(f"[状态] 音频文件不存在: {state['audio_file']}，删除无效状态")
+            os.remove(state_file)
+            return False
+        
+        # 如果最终视频已经存在，说明合并已完成，清理状态文件
+        if os.path.exists(state["video_file"]):
+            print(f"[状态] 最终视频已存在，删除旧状态")
+            os.remove(state_file)
+            return False
+        
+        return True
+    
+    def _acquire_merge_lock(self, session_dir):
+        """尝试获取合并锁，防止多个实例同时操作"""
+        lock_file = os.path.join(session_dir, "merge_lock.lock")
+        try:
+            # 使用文件锁
+            if os.path.exists(lock_file):
+                # 检查锁文件是否过期（超过5分钟视为过期）
+                try:
+                    mtime = os.path.getmtime(lock_file)
+                    if time.time() - mtime > 300:  # 5分钟
+                        print(f"[锁] 检测到过期锁文件，删除")
+                        os.remove(lock_file)
+                    else:
+                        print(f"[锁] 合并任务已被其他实例锁定")
+                        return False
+                except:
+                    os.remove(lock_file)
+            
+            # 创建锁文件
+            with open(lock_file, 'w') as f:
+                f.write(str(os.getpid()))
+            print(f"[锁] 获取合并锁成功")
+            return True
+        except Exception as e:
+            print(f"[锁] 获取锁失败: {e}")
+            return False
+    
+    def _release_merge_lock(self, session_dir):
+        """释放合并锁"""
+        lock_file = os.path.join(session_dir, "merge_lock.lock")
+        try:
+            if os.path.exists(lock_file):
+                os.remove(lock_file)
+                print(f"[锁] 释放合并锁成功")
+        except Exception as e:
+            print(f"[锁] 释放锁失败: {e}")
     
     def _resume_merge_from_state(self, state):
         """从保存的状态恢复合并任务"""
-        print(f"[恢复] 开始恢复合并任务...")
+        print(f"[恢复] ===== 开始恢复合并任务 ===== ")
+        print(f"[恢复] 状态信息: {state}")
         
-        # 先检查是否已经有最终文件了
-        if os.path.exists(state["video_file"]):
-            print(f"[恢复] 视频已存在，跳过合并")
-            self.video_file = state["video_file"]
-            self._save_merge_state(False)
-            return True
-        
-        # 检查无音频视频和音频文件
-        if not os.path.exists(state["video_file_no_audio"]):
-            print(f"[恢复] 无音频视频文件不存在: {state['video_file_no_audio']}")
-            self._save_merge_state(False)
+        try:
+            # 步骤0: 获取合并锁
+            print(f"[恢复] 步骤0: 获取合并锁")
+            session_dir = state["session_dir"]
+            if not self._acquire_merge_lock(session_dir):
+                print(f"[恢复] 失败: 无法获取合并锁，可能有其他实例在处理")
+                return False
+            
+            try:
+                # 步骤1: 设置文件路径
+                print(f"[恢复] 步骤1: 设置文件路径")
+                self.video_file_no_audio = state["video_file_no_audio"]
+                self.audio_file = state["audio_file"]
+                self.video_file = state["video_file"]
+                self.current_session_dir = session_dir
+                
+                # 步骤2: 检查文件存在性（额外的安全检查）
+                print(f"[恢复] 步骤2: 检查文件存在性")
+                if not os.path.exists(self.video_file_no_audio):
+                    print(f"[恢复] 失败: 无音频视频文件不存在")
+                    self._save_merge_state(False)
+                    return False
+                
+                if not os.path.exists(self.audio_file):
+                    print(f"[恢复] 失败: 音频文件不存在")
+                    self._save_merge_state(False)
+                    return False
+                
+                # 步骤3: 执行合并
+                print(f"[恢复] 步骤3: 执行音视频合并")
+                self.merging_in_progress = True
+                self.merge_audio_video()
+                self.merging_in_progress = False
+                
+                # 步骤4: 验证合并结果
+                print(f"[恢复] 步骤4: 验证合并结果")
+                if os.path.exists(self.video_file):
+                    print(f"[恢复] 成功: 合并完成，视频文件: {self.video_file}")
+                else:
+                    print(f"[恢复] 警告: 合并完成但视频文件不存在")
+                
+                # 步骤5: 清理状态
+                print(f"[恢复] 步骤5: 清理合并状态")
+                self._save_merge_state(False)
+                
+                print(f"[恢复] ===== 恢复合并任务完成 ===== ")
+                return True
+            
+            finally:
+                # 确保释放锁
+                self._release_merge_lock(session_dir)
+            
+        except Exception as e:
+            print(f"[恢复] 错误: 恢复合并任务失败 - {e}")
+            import traceback
+            print(f"[恢复] 错误详情: {traceback.format_exc()}")
+            try:
+                self._save_merge_state(False)
+            except:
+                pass
             return False
-        
-        # 设置文件路径
-        self.video_file_no_audio = state["video_file_no_audio"]
-        self.audio_file = state["audio_file"]
-        self.video_file = state["video_file"]
-        self.current_session_dir = state["session_dir"]
-        
-        # 执行合并
-        self.merging_in_progress = True
-        self.merge_audio_video()
-        self.merging_in_progress = False
-        self._save_merge_state(False)
-        
-        return True
     
     def _on_resume_complete(self, success):
         """恢复合并任务完成的回调（仅用于内部调用）"""
@@ -2296,20 +2415,33 @@ class ScreenRecorder:
 
     def _audio_callback(self, in_data, frame_count, time_info, status):
         """音频回调函数 - 每次有数据时自动调用"""
+        import pyaudiowpatch as pyaudio
+        
+        # 检查是否停止录制
+        if not self.recording:
+            return (None, pyaudio.paComplete)
+            
         try:
-            if self.recording and not self.paused and hasattr(self, '_master_clock_start'):
-                current_time = time.perf_counter()
-                pts = current_time - self._master_clock_start
-                self._audio_chunks_with_pts.append((pts, bytes(in_data)))
-                if hasattr(self, '_audio_paused_at') and self._audio_paused_at > 0:
-                    self._audio_total_paused_time += (current_time - self._audio_paused_at)
-                    self._audio_paused_at = 0.0
+            if self.recording and not self.paused:
+                with self.audio_lock:
+                    # 存储原始音频数据（用于直接拼接）
+                    self.audio_frames.append(bytes(in_data))
+                    self.audio_total_written += len(in_data)
+                    
+                    # 同时保存带时间戳的数据（用于调试和备用）
+                    if hasattr(self, '_master_clock_start'):
+                        current_time = time.perf_counter()
+                        pts = current_time - self._master_clock_start
+                        self._audio_chunks_with_pts.append((pts, bytes(in_data)))
+                        
+                    if hasattr(self, '_audio_paused_at') and self._audio_paused_at > 0:
+                        self._audio_total_paused_time += (time.perf_counter() - self._audio_paused_at)
+                        self._audio_paused_at = 0.0
             elif self.paused and hasattr(self, '_audio_paused_at') and self._audio_paused_at == 0.0:
                 self._audio_paused_at = time.perf_counter()
         except Exception as e:
             print(f"[音频] 回调警告: {e}")
         
-        import pyaudiowpatch as pyaudio
         return (None, pyaudio.paContinue)
     
     def _record_audio_thread(self):
@@ -2326,30 +2458,82 @@ class ScreenRecorder:
                                     self._audio_rate, self._audio_format, self._audio)
                 return
 
+            # 重置音频数据存储
             self._audio_chunks_with_pts = []
+            self.audio_frames = []
+            self.audio_total_written = 0
             self._audio_total_paused_time = 0.0
             self._audio_paused_at = 0.0
             
             print("[音频] 开始录制音频（回调模式）")
-            recording_start_time = time.perf_counter()
             
             self._audio_stream.start_stream()
             
+            # 等待录制停止
             while self.recording:
                 time.sleep(0.1)
             
-            record_duration = time.perf_counter() - recording_start_time
-            active_duration = record_duration - self._audio_total_paused_time
+            print("[音频] 开始停止录制...")
             
-            self._audio_stream.stop_stream()
+            # 第一步：停止音频流（不要先读数据）
+            if self._audio_stream.is_active():
+                self._audio_stream.stop_stream()
+                print("[音频] 音频流已停止")
+            
+            # 第二步：等待回调完全退出（重要！）
+            time.sleep(0.1)
+            print("[音频] 等待回调退出完成")
+            
+            # 第三步：关闭流
             self._audio_stream.close()
             self._audio.terminate()
+            print("[音频] 音频设备已关闭")
 
-            self._audio_total_duration = active_duration
+            # 第四步：在锁保护下合并所有音频数据
+            with self.audio_lock:
+                full_audio = b''.join(self.audio_frames)
+            
+            print(f"[音频] 合并完成，总字节数: {len(full_audio)}")
+            
+            # 第五步：计算开头静音（补偿启动延迟）
+            sample_rate = self._audio_rate
+            channels = self._audio_channels
+            bytes_per_sample = 2  # 16-bit
+            
+            silence_samples = 0
+            if self._audio_chunks_with_pts:
+                first_pts = self._audio_chunks_with_pts[0][0]
+                silence_samples = max(0, int(round(first_pts * sample_rate)))
+                print(f"[音频] 第一帧PTS: {first_pts:.4f}s, 补静音: {silence_samples}采样")
+            
+            # 创建静音数据
+            silence = b'\x00' * (silence_samples * channels * bytes_per_sample)
+            
+            # 合并静音和音频
+            final_pcm = silence + full_audio
+            
+            print(f"[音频] 最终PCM长度: {len(final_pcm)}字节")
+            
+            # 第六步：保存为 WAV 文件（使用 wave 模块直接写入）
+            with wave.open(self.audio_file, 'wb') as wf:
+                wf.setnchannels(channels)
+                wf.setsampwidth(bytes_per_sample)
+                wf.setframerate(sample_rate)
+                wf.writeframes(final_pcm)
+            
+            print(f"[音频] 音频保存成功: {self.audio_file}")
+            print(f"[音频] 音频时长: {len(final_pcm) / (channels * bytes_per_sample * sample_rate):.2f}秒")
 
+            # 第七步：重置计数器
+            with self.audio_lock:
+                self.audio_total_written = 0
+                self.audio_total_read = 0
+                self.audio_frames.clear()
+
+            # 保存时间戳文件（用于调试）
             self._save_audio_timestamps_with_pts()
-
-            self._rebuild_audio_by_timestamps()
+            
+            print("[音频] 录制完成，音频文件已保存")
 
         except Exception as e:
             print(f"[音频] 录制失败: {e}")
@@ -2394,8 +2578,23 @@ class ScreenRecorder:
         
         # 使用录制的主时钟时长作为音频缓冲区长度
         total_duration = self._master_clock_end - self._master_clock_start
+        
+        # 安全检查：确保时长为正
+        if total_duration <= 0:
+            print(f"[音频] 警告：无效的录制时长 {total_duration:.2f}秒，使用音频块估算")
+            # 使用音频块数量估算时长
+            if self._audio_chunks_with_pts:
+                total_duration = len(self._audio_chunks_with_pts) * chunk_size / sample_rate
+            else:
+                total_duration = 1.0  # 最小1秒
+        
         total_samples = int(total_duration * sample_rate)
         buffer_length = total_samples * bytes_per_frame
+        
+        # 安全检查：确保缓冲区长度非负
+        if buffer_length < 0:
+            print(f"[音频] 错误：缓冲区长度为负 {buffer_length}，使用默认值")
+            buffer_length = sample_rate * bytes_per_frame  # 默认1秒
         
         print(f"[音频] 参数: 采样率={sample_rate}, 通道={channels}, chunk={chunk_size}")
         print(f"[音频] 录制时长: {total_duration:.2f}秒, 总采样数: {total_samples}")
@@ -2418,15 +2617,18 @@ class ScreenRecorder:
         
         for pts, chunk_data in self._audio_chunks_with_pts:
             # 计算这个音频块应该放在缓冲区的哪个位置
-            start_sample = int(round((pts - self._master_clock_start) * sample_rate))
+            # pts已经是相对于_master_clock_start的偏移，直接使用即可
+            start_sample = int(round(pts * sample_rate))
             start_byte = start_sample * bytes_per_frame
             end_byte = start_byte + len(chunk_data)
             
+            # 安全检查：确保start_byte非负
             if start_byte < 0:
-                # PTS在录制开始之前，跳过
+                print(f"[音频] 警告：跳过负位置 PTS={pts:.4f}, start_byte={start_byte}")
                 continue
             if start_byte >= len(pcm_buffer):
                 # PTS超出录制时长，跳过
+                print(f"[音频] 警告：跳过超出范围的 PTS={pts:.4f}, start_byte={start_byte}")
                 continue
                 
             # 确保不溢出
@@ -4071,13 +4273,20 @@ class ScreenRecorder:
         self.audio_available = audio_available
         self.pygame = pygame
         
-        self.video_capture = cv2.VideoCapture(self.video_file)
+        # 强制使用 FFmpeg 后端，确保支持精确 seek
+        self.video_capture = cv2.VideoCapture(self.video_file, cv2.CAP_FFMPEG)
+        if not self.video_capture.isOpened():
+            # 如果 FFmpeg 后端失败，尝试默认后端
+            self.video_capture = cv2.VideoCapture(self.video_file)
+        
         if not self.video_capture.isOpened():
             messagebox.showerror("错误", "无法打开视频文件")
             self.video_playing = False
             self.play_btn.config(state=tk.NORMAL)
             self.pause_video_btn.config(state=tk.DISABLED)
             return
+        
+        print(f"[视频] 使用后端: {'FFmpeg' if cv2.CAP_FFMPEG else '默认'}")
         
         self.stop_video = False
         frame_count = 0
@@ -4117,18 +4326,26 @@ class ScreenRecorder:
                     audio_started = True
                     print(f"[音频] 开始播放音频，起始偏移: {start_offset_sec:.2f}秒")
                 
-                # 计算当前播放位置
+                # 计算当前播放位置（使用更新后的时间基准）
                 current_playback_sec = 0.0
                 if audio_started and audio_available and pygame and pygame.mixer.music.get_busy():
                     # 使用pygame的音频位置作为主时钟（最可靠）
                     audio_pos_ms = pygame.mixer.music.get_pos()
-                    current_playback_sec = start_offset_sec + audio_pos_ms / 1000.0
+                    # 使用 self.playback_base_sec 而不是 start_offset_sec，支持拖动后的同步
+                    current_playback_sec = self.playback_base_sec + audio_pos_ms / 1000.0
                     # 每2秒打印一次同步信息
                     if int(current_playback_sec) % 2 == 0 and frame_count % 20 == 0:
-                        print(f"[同步] 音频: {audio_pos_ms}ms, 播放: {current_playback_sec:.2f}s")
+                        print(f"[同步] 音频: {audio_pos_ms}ms, 播放: {current_playback_sec:.2f}s, 基准: {self.playback_base_sec:.2f}s")
                 else:
                     # 没有音频时，使用帧计数计算播放位置
                     current_playback_sec = frame_count / fps
+                
+                # 如果发生 seek，重置 frame_count 与视频实际位置同步
+                if self.seek_occurred:
+                    self.seek_occurred = False
+                    # 用更新后的时间基准重新计算帧号，避免跳帧循环从旧帧号开始追赶
+                    frame_count = max(0, int(current_playback_sec * fps))
+                    print(f"[同步] seek 后重置 frame_count={frame_count}, 当前时间={current_playback_sec:.2f}s")
                 
                 # 只有有音频时才进行跳帧追赶
                 if audio_available and pygame and pygame.mixer.music.get_busy():
@@ -4145,6 +4362,7 @@ class ScreenRecorder:
                     if skip_count > 5:  # 只在跳过较多帧时打印
                         print(f"[同步] 跳过 {skip_count} 帧追赶")
                 
+                print(f"[主页面] 准备读取帧，当前帧={frame_count}, 播放时间={current_playback_sec:.2f}s")
                 with self.video_lock:
                     ret, frame = self.video_capture.read()
                     if not ret:
@@ -4243,11 +4461,13 @@ class ScreenRecorder:
             self.status_label.config(text="状态: 播放中", fg="#4CAF50")
     
     def on_progress_click(self, event):
+        print(f"\n[进度条点击] video_duration={self.video_duration:.2f}, clip_mode={self.clip_mode}, progress_bar_dragging={self.progress_bar_dragging}")
         if self.video_duration > 0:
             # 检查是否点击了剪辑标记区域
             if not self.clip_mode:
                 self.progress_bar_dragging = True
                 width = self.progress_canvas.winfo_width()
+                print(f"[进度条点击] 画布宽度={width}, 点击位置x={event.x}, y={event.y}")
                 if width > 0:
                     padding = 20
                     usable_width = width - 2 * padding
@@ -4259,15 +4479,20 @@ class ScreenRecorder:
                     else:
                         position = (event.x - padding) / usable_width
                     self.current_time = position * self.video_duration
+                    print(f"[进度条点击] 计算位置={position}, current_time={self.current_time:.2f}s")
                     # 显示时间提示
                     self.show_time_tooltip(event.x, event.y, self.current_time)
                     self.update_progress_bar()
                     self.update_time_label()
             else:
                 # 在剪辑模式下，不处理进度条点击，让剪辑标记的点击事件优先处理
+                print(f"[进度条点击] 剪辑模式，跳过处理")
                 pass
+        else:
+            print(f"[进度条点击] video_duration为0，无法拖动")
     
     def on_progress_drag(self, event):
+        print(f"[进度条拖动] 拖动状态: progress_bar_dragging={self.progress_bar_dragging}, video_duration={self.video_duration:.2f}")
         if self.progress_bar_dragging and self.video_duration > 0:
             width = self.progress_canvas.winfo_width()
             if width > 0:
@@ -4281,6 +4506,7 @@ class ScreenRecorder:
                 else:
                     position = (event.x - padding) / usable_width
                 self.current_time = position * self.video_duration
+                print(f"[进度条拖动] 位置: x={event.x}, position={position:.3f}, current_time={self.current_time:.2f}s")
                 # 显示时间提示
                 self.show_time_tooltip(event.x, event.y, self.current_time)
                 self.update_progress_bar()
@@ -4292,10 +4518,29 @@ class ScreenRecorder:
             self.progress_bar_dragging = False
             target_sec = self.current_time
             
+            print(f"[进度] 拖动到: {target_sec:.2f}秒")
+            
             # 更新视频位置
             with self.video_lock:
                 if self.video_playing and self.video_capture:
+                    # 使用 CAP_PROP_POS_MSEC 设置位置
                     self.video_capture.set(cv2.CAP_PROP_POS_MSEC, target_sec * 1000)
+                    # 冲洗解码器缓冲，确保下一次 read 不从旧位置返回数据
+                    self.video_capture.grab()
+                    # 验证 seek 是否成功
+                    new_pos = self.video_capture.get(cv2.CAP_PROP_POS_MSEC)
+                    print(f"[视频] seek 目标: {target_sec * 1000:.2f} ms, 实际: {new_pos:.2f} ms")
+                    if abs(new_pos - target_sec * 1000) > 100:
+                        # 如果 seek 失败，尝试使用帧索引
+                        fps = self.video_capture.get(cv2.CAP_PROP_FPS)
+                        if fps > 0:
+                            target_frame = int(target_sec * fps)
+                            self.video_capture.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+                            new_pos = self.video_capture.get(cv2.CAP_PROP_POS_MSEC)
+                            print(f"[视频] 重试 seek（帧索引）: 目标帧 {target_frame}, 实际: {new_pos:.2f} ms")
+            
+            # 标记 seek 发生，通知播放线程重置 frame_count
+            self.seek_occurred = True
             
             # 同步音频位置到拖动位置
             if hasattr(self, 'audio_available') and self.audio_available:
@@ -4307,6 +4552,11 @@ class ScreenRecorder:
                         print(f"[音频] seek到: {target_sec:.2f}秒")
                     except Exception as e:
                         print(f"[音频] seek失败: {e}")
+            
+            # 关键修复：更新播放时间基准，确保进度显示同步
+            print(f"[进度] 更新时间基准: playback_base_sec = {target_sec}, play_start_time = 当前时间")
+            self.playback_base_sec = target_sec
+            self.play_start_time = time.time()
             
             # 销毁时间提示窗口
             if hasattr(self, 'time_tooltip') and self.time_tooltip:
