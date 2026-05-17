@@ -15,11 +15,12 @@ from PIL import Image, ImageTk
 import requests
 import webbrowser
 
-CURRENT_VERSION = 'v1.0.1'
+CURRENT_VERSION = "v1.0.1"
 
 # 尝试导入imageio_ffmpeg用于快速视频裁剪
 try:
     import imageio_ffmpeg
+
     IMAGEIO_FFMPEG_AVAILABLE = True
 except ImportError:
     IMAGEIO_FFMPEG_AVAILABLE = False
@@ -27,6 +28,7 @@ except ImportError:
 try:
     from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
+
     WATCHDOG_AVAILABLE = True
 
     class FileSystemMonitor(FileSystemEventHandler):
@@ -34,8 +36,14 @@ try:
             self.screen_recorder = screen_recorder
 
         def on_any_event(self, event):
-            if os.path.exists(self.screen_recorder.video_library_dir) and self.screen_recorder.video_library_dir in event.src_path:
-                self.screen_recorder.root.after(500, self.screen_recorder.init_folder_structure)
+            if (
+                os.path.exists(self.screen_recorder.video_library_dir)
+                and self.screen_recorder.video_library_dir in event.src_path
+            ):
+                self.screen_recorder.root.after(
+                    500, self.screen_recorder.init_folder_structure
+                )
+
 except ImportError:
     WATCHDOG_AVAILABLE = False
 
@@ -46,22 +54,25 @@ except ImportError:
         def on_any_event(self, event):
             pass
 
+
 class ScreenRecorder:
     def __init__(self, root):
         self.root = root
         self.root.title("直播录屏标记精灵")
-        
+
         # 设置窗口图标
         import os
         import sys
+
         try:
-            if hasattr(sys, '_MEIPASS'):
-                icon_path = os.path.join(sys._MEIPASS, 'app_icon.ico')
+            if hasattr(sys, "_MEIPASS"):
+                icon_path = os.path.join(sys._MEIPASS, "app_icon.ico")
             else:
-                icon_path = os.path.join(os.path.dirname(__file__), 'app_icon.ico')
-            
+                icon_path = os.path.join(os.path.dirname(__file__), "app_icon.ico")
+
             if os.path.exists(icon_path):
                 from PIL import Image, ImageTk
+
                 icon_image = Image.open(icon_path)
                 icon_photo = ImageTk.PhotoImage(icon_image)
                 self.root.iconphoto(True, icon_photo)
@@ -70,7 +81,7 @@ class ScreenRecorder:
                 print(f"Icon file not found: {icon_path}")
         except Exception as e:
             print(f"Failed to set window icon: {e}")
-        
+
         # 获取屏幕大小的80%
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
@@ -81,11 +92,12 @@ class ScreenRecorder:
         self.root.resizable(True, True)
         self.recording = False
         self.paused = False
-        
+
         # 音频录制线程安全机制
         import threading
+
         self.audio_lock = threading.Lock()
-        self.audio_frames = []         # 存储所有音频数据块
+        self.audio_frames = []  # 存储所有音频数据块
         self.audio_total_written = 0
         self.audio_total_read = 0
         self.recorder = None
@@ -119,7 +131,10 @@ class ScreenRecorder:
         self.seek_occurred = False  # seek 标志，用于播放线程重置 frame_count
         self.merging_in_progress = False  # 合并任务是否正在进行中
         self.merge_completed = False  # 合并任务是否已完成
-        
+        self.merge_progress = 0  # 合并进度 0-100
+        self._temp_recording_file = None  # 录制中的临时视频文件路径
+        self._real_recorded_duration = 0.0  # 真实录制时长
+
         # 音频相关属性（预先初始化，防止导入失败时出现AttributeError）
         self._audio = None
         self._audio_format = None
@@ -130,19 +145,19 @@ class ScreenRecorder:
         self._audio_use_silent = False  # 是否使用静音模式
         self._audio_chunks_with_pts = []
         self._audio_total_paused_time = 0.0
-        
+
         # 音视频同步时间基准变量
         self.playback_base_sec = 0.0
         self.play_start_tick = 0
-        
+
         # 用户账号相关变量
-        
+
         # 存储每个视频文件对应的标记列表
         self.video_markers = {}
-        
+
         # 存储每个视频文件对应的片段列表
         self.video_clips = {}
-        
+
         # 截取视频相关变量
         self.clip_mode = False
         self.clip_start = 0
@@ -152,25 +167,29 @@ class ScreenRecorder:
         self.clip_area_id = None
         self.dragging_clip_start = False
         self.dragging_clip_end = False
-        
+
         # 缩略功能区相关属性
         self.mini_window = None
         self.mini_pause_btn = None
         self.mini_stop_btn = None
         self.mini_mark_btn = None
         self.mini_status_label = None
-        
+
         # 目录相关变量 - 使用用户文档目录确保权限兼容
         user_documents = os.path.expanduser("~/Documents")
         self.app_data_dir = os.path.join(user_documents, "LiveRecorder")
-        self.recordings_dir = os.path.join(self.app_data_dir, "recordings")  # 录制视频保存目录
+        self.recordings_dir = os.path.join(
+            self.app_data_dir, "recordings"
+        )  # 录制视频保存目录
         self.current_session_dir = None  # 当前录制会话目录
         self.clip_dir = "截取视频"  # 截取视频文件夹
-        self.video_library_dir = os.path.join(self.app_data_dir, "视频资料库")  # 独立的视频资料库目录
-        
+        self.video_library_dir = os.path.join(
+            self.app_data_dir, "视频资料库"
+        )  # 独立的视频资料库目录
+
         # 确保目录存在
         self.ensure_directories()
-        
+
         # 显示路径信息
         print("=" * 60)
         print(f"[启动] 应用数据目录: {self.app_data_dir}")
@@ -179,20 +198,22 @@ class ScreenRecorder:
         print("=" * 60)
 
         self.create_ui()
-        
+
         # 启动文件系统监控
         self.start_file_monitor()
-    
+
     def save_login_state(self, user_id):
         """保存登录状态到用户文档目录"""
         try:
             login_state_file = os.path.join(self.app_data_dir, "login_state.json")
             with open(login_state_file, "w", encoding="utf-8") as f:
-                json.dump({"user_id": user_id, "saved_at": datetime.now().isoformat()}, f)
+                json.dump(
+                    {"user_id": user_id, "saved_at": datetime.now().isoformat()}, f
+                )
             print(f"[登录状态] 已保存用户 {user_id} 的登录状态到: {login_state_file}")
         except Exception as e:
             print(f"[登录状态] 保存失败: {e}")
-    
+
     def clear_login_state(self):
         """清除本地登录状态"""
         try:
@@ -202,33 +223,33 @@ class ScreenRecorder:
             print("[登录状态] 已清除本地登录状态")
         except Exception as e:
             print(f"[登录状态] 清除失败: {e}")
-    
+
     def try_auto_login(self):
         """尝试自动登录"""
         try:
             login_state_file = os.path.join(self.app_data_dir, "login_state.json")
             if not os.path.exists(login_state_file):
                 return
-            
+
             with open(login_state_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            
+
             user_id = data.get("user_id")
             if not user_id:
                 return
-            
+
             # 从数据库获取用户信息
             if not user:
                 self.clear_login_state()
                 return
-            
+
             # 自动登录
             self.do_login(user, is_auto_login=True)
             print(f"[登录状态] 用户 {user_id} 自动登录成功")
         except Exception as e:
             print(f"[登录状态] 自动登录失败: {e}")
             self.clear_login_state()
-    
+
     def ensure_directories(self):
         """确保必要的目录存在 - 使用用户文档目录确保权限"""
         try:
@@ -236,22 +257,23 @@ class ScreenRecorder:
             if not os.path.exists(self.app_data_dir):
                 os.makedirs(self.app_data_dir)
                 print(f"[目录] 创建应用数据目录: {self.app_data_dir}")
-            
+
             # 确保recordings目录存在
             if not os.path.exists(self.recordings_dir):
                 os.makedirs(self.recordings_dir)
                 print(f"[目录] 创建录制目录: {self.recordings_dir}")
-            
+
             # 确保视频资料库目录存在
             if not os.path.exists(self.video_library_dir):
                 os.makedirs(self.video_library_dir)
                 print(f"[目录] 创建视频资料库: {self.video_library_dir}")
-                
+
         except Exception as e:
             # 备用方案：使用临时目录
             print(f"[错误] 创建目录失败: {e}")
             print(f"[信息] 尝试使用临时目录作为备用")
             import tempfile
+
             self.app_data_dir = os.path.join(tempfile.gettempdir(), "LiveRecorder")
             self.recordings_dir = os.path.join(self.app_data_dir, "recordings")
             self.video_library_dir = os.path.join(self.app_data_dir, "视频资料库")
@@ -260,192 +282,282 @@ class ScreenRecorder:
             if not os.path.exists(self.video_library_dir):
                 os.makedirs(self.video_library_dir)
             print(f"[备用] 使用临时目录: {self.app_data_dir}")
-    
+
     def start_file_monitor(self):
         """启动文件系统监控"""
         if WATCHDOG_AVAILABLE and os.path.exists(self.video_library_dir):
             self.file_observer = Observer()
             event_handler = FileSystemMonitor(self)
             # 监控视频资料库目录的所有子目录
-            self.file_observer.schedule(event_handler, self.video_library_dir, recursive=True)
+            self.file_observer.schedule(
+                event_handler, self.video_library_dir, recursive=True
+            )
             self.file_observer.start()
             print("文件系统监控已启动")
-    
+
     def stop_file_monitor(self):
         """停止文件系统监控"""
         if WATCHDOG_AVAILABLE and self.file_observer:
             self.file_observer.stop()
             self.file_observer.join()
             print("文件系统监控已停止")
-    
+
     def create_ui(self):
         # 设置现代主题 - 剪映专业风格
         self.style = ttk.Style()
-        self.style.theme_use('clam')
-        
+        self.style.theme_use("clam")
+
         # 主色调定义 - Trae黑色主题配绿色点缀
-        self.bg_color = "#1a1a1a"           # 深黑色背景
-        self.card_bg = "#252525"            # 深灰色卡片背景
-        self.light_bg = "#333333"           # 浅色背景
-        self.text_color = "#ffffff"          # 主文本颜色
-        self.secondary_text = "#b0b0b0"      # 次要文本颜色
-        self.accent_color = "#34a853"        # 强调色（Trae绿）
-        self.accent_hover = "#2d9249"       # 悬停色
-        self.success_color = "#34a853"        # 成功色
-        self.danger_color = "#ea4335"        # 危险色
-        self.border_color = "#404040"        # 边框色
-        self.input_bg = "#2d2d2d"            # 输入框背景
-        
+        self.bg_color = "#1a1a1a"  # 深黑色背景
+        self.card_bg = "#252525"  # 深灰色卡片背景
+        self.light_bg = "#333333"  # 浅色背景
+        self.text_color = "#ffffff"  # 主文本颜色
+        self.secondary_text = "#b0b0b0"  # 次要文本颜色
+        self.accent_color = "#34a853"  # 强调色（Trae绿）
+        self.accent_hover = "#2d9249"  # 悬停色
+        self.success_color = "#34a853"  # 成功色
+        self.danger_color = "#ea4335"  # 危险色
+        self.border_color = "#404040"  # 边框色
+        self.input_bg = "#2d2d2d"  # 输入框背景
+
         # 配置主窗口
         self.root.configure(bg=self.bg_color)
         # 使用更现代的字体
-        self.root.option_add('*Font', ('Segoe UI', 9))
-        
+        self.root.option_add("*Font", ("Segoe UI", 9))
+
         # 配置样式
         # 框架样式
-        self.style.configure('Custom.TFrame', background=self.bg_color)
-        self.style.configure('Card.TFrame', background=self.card_bg)
-        self.style.configure('Light.TFrame', background=self.light_bg)
-        
+        self.style.configure("Custom.TFrame", background=self.bg_color)
+        self.style.configure("Card.TFrame", background=self.card_bg)
+        self.style.configure("Light.TFrame", background=self.light_bg)
+
         # LabelFrame样式
-        self.style.configure('Custom.TLabelframe', background=self.card_bg,
-                           borderwidth=1, relief='solid', bordercolor=self.border_color)
-        self.style.configure('Custom.TLabelframe.Label', background=self.card_bg,
-                           foreground=self.secondary_text, font=('Segoe UI', 10, 'bold'))
-        
+        self.style.configure(
+            "Custom.TLabelframe",
+            background=self.card_bg,
+            borderwidth=1,
+            relief="solid",
+            bordercolor=self.border_color,
+        )
+        self.style.configure(
+            "Custom.TLabelframe.Label",
+            background=self.card_bg,
+            foreground=self.secondary_text,
+            font=("Segoe UI", 10, "bold"),
+        )
+
         # Label样式
-        self.style.configure('Custom.TLabel', background=self.bg_color,
-                          foreground=self.text_color, font=('Segoe UI', 9))
-        self.style.configure('Title.TLabel', background=self.card_bg,
-                          foreground=self.text_color, font=('Segoe UI', 12, 'bold'))
-        self.style.configure('Small.TLabel', background=self.card_bg,
-                          foreground=self.secondary_text, font=('Segoe UI', 9))
-        
+        self.style.configure(
+            "Custom.TLabel",
+            background=self.bg_color,
+            foreground=self.text_color,
+            font=("Segoe UI", 9),
+        )
+        self.style.configure(
+            "Title.TLabel",
+            background=self.card_bg,
+            foreground=self.text_color,
+            font=("Segoe UI", 12, "bold"),
+        )
+        self.style.configure(
+            "Small.TLabel",
+            background=self.card_bg,
+            foreground=self.secondary_text,
+            font=("Segoe UI", 9),
+        )
+
         # 按钮基础样式 - 现代圆角设计
-        self.style.configure('Custom.TButton',
-                          background=self.light_bg,
-                          foreground=self.text_color,
-                          font=('Segoe UI', 9, 'bold'),
-                          padding=(16, 10),
-                          borderwidth=0,
-                          relief='flat',
-                          focuscolor='none',
-                          borderradius=6)  # 圆角
-        self.style.map('Custom.TButton',
-                    background=[('active', '#4a4a4a'), ('pressed', '#3a3a3a'), ('disabled', '#3a3a3a')],
-                    foreground=[('active', self.text_color), ('disabled', '#666666')])
-        
+        self.style.configure(
+            "Custom.TButton",
+            background=self.light_bg,
+            foreground=self.text_color,
+            font=("Segoe UI", 9, "bold"),
+            padding=(16, 10),
+            borderwidth=0,
+            relief="flat",
+            focuscolor="none",
+            borderradius=6,
+        )  # 圆角
+        self.style.map(
+            "Custom.TButton",
+            background=[
+                ("active", "#4a4a4a"),
+                ("pressed", "#3a3a3a"),
+                ("disabled", "#3a3a3a"),
+            ],
+            foreground=[("active", self.text_color), ("disabled", "#666666")],
+        )
+
         # 强调按钮样式 - 绿色圆角
-        self.style.configure('Accent.TButton',
-                          background=self.accent_color,
-                          foreground='#ffffff',
-                          font=('Segoe UI', 9, 'bold'),
-                          padding=(16, 10),
-                          borderwidth=0,
-                          relief='flat',
-                          focuscolor='none',
-                          borderradius=6)  # 圆角
-        self.style.map('Accent.TButton',
-                    background=[('active', self.accent_hover), ('pressed', '#267340'), ('disabled', '#3a3a3a')],
-                    foreground=[('active', '#ffffff'), ('disabled', '#666666')])
-        
+        self.style.configure(
+            "Accent.TButton",
+            background=self.accent_color,
+            foreground="#ffffff",
+            font=("Segoe UI", 9, "bold"),
+            padding=(16, 10),
+            borderwidth=0,
+            relief="flat",
+            focuscolor="none",
+            borderradius=6,
+        )  # 圆角
+        self.style.map(
+            "Accent.TButton",
+            background=[
+                ("active", self.accent_hover),
+                ("pressed", "#267340"),
+                ("disabled", "#3a3a3a"),
+            ],
+            foreground=[("active", "#ffffff"), ("disabled", "#666666")],
+        )
+
         # 危险按钮样式 - 红色圆角
-        self.style.configure('Danger.TButton',
-                          background=self.danger_color,
-                          foreground='#ffffff',
-                          font=('Segoe UI', 9, 'bold'),
-                          padding=(16, 10),
-                          borderwidth=0,
-                          relief='flat',
-                          focuscolor='none',
-                          borderradius=6)  # 圆角
-        self.style.map('Danger.TButton',
-                    background=[('active', '#ff6b5b'), ('pressed', '#c5221f')],
-                    foreground=[('active', '#ffffff')])
-        
+        self.style.configure(
+            "Danger.TButton",
+            background=self.danger_color,
+            foreground="#ffffff",
+            font=("Segoe UI", 9, "bold"),
+            padding=(16, 10),
+            borderwidth=0,
+            relief="flat",
+            focuscolor="none",
+            borderradius=6,
+        )  # 圆角
+        self.style.map(
+            "Danger.TButton",
+            background=[("active", "#ff6b5b"), ("pressed", "#c5221f")],
+            foreground=[("active", "#ffffff")],
+        )
+
         # 输入框样式 - 圆角设计
-        self.style.configure('Custom.TEntry',
-                          fieldbackground=self.input_bg,
-                          foreground=self.text_color,
-                          background=self.light_bg,
-                          borderwidth=1,
-                          relief='solid',
-                          bordercolor=self.border_color,
-                          padding=8,
-                          borderradius=4)  # 圆角
-        self.style.map('Custom.TEntry',
-                    fieldbackground=[('focus', self.input_bg)],
-                    bordercolor=[('focus', self.accent_color)])
-        
+        self.style.configure(
+            "Custom.TEntry",
+            fieldbackground=self.input_bg,
+            foreground=self.text_color,
+            background=self.light_bg,
+            borderwidth=1,
+            relief="solid",
+            bordercolor=self.border_color,
+            padding=8,
+            borderradius=4,
+        )  # 圆角
+        self.style.map(
+            "Custom.TEntry",
+            fieldbackground=[("focus", self.input_bg)],
+            bordercolor=[("focus", self.accent_color)],
+        )
+
         # 控制栏 - 现代化卡片式设计
         self.control_frame = tk.Frame(self.root, bg=self.card_bg, padx=24, pady=20)
         self.control_frame.pack(fill=tk.X, side=tk.TOP, pady=(10, 10), padx=10)
         # 添加圆角效果（通过模拟实现）
-        self.control_frame.configure(relief='flat')
-        
+        self.control_frame.configure(relief="flat")
+
         # 标题区域
         title_frame = tk.Frame(self.control_frame, bg=self.card_bg)
         title_frame.pack(side=tk.LEFT, fill=tk.Y, expand=True)
-        
+
         # 标题和使用流程的垂直容器
         title_content_frame = tk.Frame(title_frame, bg=self.card_bg)
         title_content_frame.pack(side=tk.LEFT, anchor=tk.CENTER, fill=tk.Y)
-        
-        title_label = tk.Label(title_content_frame, text="直播录屏标记精灵", 
-                font=('STKaiti', 18, 'bold'),
-                bg=self.card_bg, fg='#2ecc71')
+
+        title_label = tk.Label(
+            title_content_frame,
+            text="直播录屏标记精灵",
+            font=("STKaiti", 18, "bold"),
+            bg=self.card_bg,
+            fg="#2ecc71",
+        )
         title_label.pack(side=tk.TOP, anchor=tk.W)
-        
+
         # 使用流程说明
-        instruction_label = tk.Label(title_content_frame, 
-                text="使用流程:工具以外打开直播画面 → 开始录屏 → 标记进度 → 结束录屏 → 找到标记进度黄色标记截取需要的视频片段",
-                font=('Segoe UI', 9),
-                bg=self.card_bg, fg=self.secondary_text)
+        instruction_label = tk.Label(
+            title_content_frame,
+            text="使用流程:工具以外打开直播画面 → 开始录屏 → 标记进度 → 结束录屏 → 找到标记进度黄色标记截取需要的视频片段",
+            font=("Segoe UI", 9),
+            bg=self.card_bg,
+            fg=self.secondary_text,
+        )
         instruction_label.pack(side=tk.TOP, anchor=tk.W, fill=tk.X, pady=(8, 0))
-        
+
         # 按钮区域
         self.button_frame = tk.Frame(self.control_frame, bg=self.card_bg)
         self.button_frame.pack(side=tk.RIGHT, fill=tk.Y)
-        
+
         # 主按钮 - 使用grid布局固定位置
-        self.start_btn = ttk.Button(self.button_frame, text="开始录屏", command=self.start_recording, 
-                                  style='Accent.TButton')
+        self.start_btn = ttk.Button(
+            self.button_frame,
+            text="开始录屏",
+            command=self.start_recording,
+            style="Accent.TButton",
+        )
         self.start_btn.grid(row=0, column=0, padx=8, pady=4)
-        
-        self.pause_btn = ttk.Button(self.button_frame, text="暂停录屏", command=self.pause_recording, 
-                                  style='Custom.TButton', takefocus=False)
+
+        self.pause_btn = ttk.Button(
+            self.button_frame,
+            text="暂停录屏",
+            command=self.pause_recording,
+            style="Custom.TButton",
+            takefocus=False,
+        )
         # 初始状态隐藏
-        
-        self.stop_btn = ttk.Button(self.button_frame, text="结束录屏", command=self.stop_recording, 
-                                  style='Danger.TButton')
+
+        self.stop_btn = ttk.Button(
+            self.button_frame,
+            text="结束录屏",
+            command=self.stop_recording,
+            style="Danger.TButton",
+        )
         # 初始状态隐藏
-        
-        self.mark_btn = ttk.Button(self.button_frame, text="标记进度[空格]", command=self.mark_progress, 
-                                  style='Accent.TButton', takefocus=False)
+
+        self.mark_btn = ttk.Button(
+            self.button_frame,
+            text="标记进度[空格]",
+            command=self.mark_progress,
+            style="Accent.TButton",
+            takefocus=False,
+        )
         self.mark_btn.grid(row=0, column=2, padx=6, pady=2)
-        
+
         # 添加分隔符（column=3）
         separator = ttk.Separator(self.button_frame, orient=tk.VERTICAL)
-        separator.grid(row=0, column=3, padx=12, pady=4, sticky='ns')
-        
-        self.clip_btn = ttk.Button(self.button_frame, text="截取视频", command=self.start_clip, 
-                                  state=tk.DISABLED, style='Custom.TButton')
+        separator.grid(row=0, column=3, padx=12, pady=4, sticky="ns")
+
+        self.clip_btn = ttk.Button(
+            self.button_frame,
+            text="截取视频",
+            command=self.start_clip,
+            state=tk.DISABLED,
+            style="Custom.TButton",
+        )
         self.clip_btn.grid(row=0, column=4, padx=8, pady=4)
-        
-        self.finish_clip_btn = ttk.Button(self.button_frame, text="完成截取", command=self.finish_clip, 
-                                         state=tk.DISABLED, style='Accent.TButton')
+
+        self.finish_clip_btn = ttk.Button(
+            self.button_frame,
+            text="完成截取",
+            command=self.finish_clip,
+            state=tk.DISABLED,
+            style="Accent.TButton",
+        )
         self.finish_clip_btn.grid(row=0, column=5, padx=8, pady=4)
-        
+
         # 录制记录按钮
-        self.record_history_btn = ttk.Button(self.button_frame, text="录制记录", command=self.show_record_history, 
-                                           style='Custom.TButton')
+        self.record_history_btn = ttk.Button(
+            self.button_frame,
+            text="录制记录",
+            command=self.show_record_history,
+            style="Custom.TButton",
+        )
         self.record_history_btn.grid(row=0, column=6, padx=8, pady=4)
-        
+
         # 视频资料库按钮
-        self.video_library_btn = ttk.Button(self.button_frame, text="视频资料库", command=self.show_video_library, 
-                                           style='Custom.TButton')
+        self.video_library_btn = ttk.Button(
+            self.button_frame,
+            text="视频资料库",
+            command=self.show_video_library,
+            style="Custom.TButton",
+        )
         self.video_library_btn.grid(row=0, column=7, padx=8, pady=4)
-        
+
         # 用户头像按钮（在最小化按钮左边）
 
         # 主框架 - 左侧导航 + 右侧内容
@@ -459,44 +571,46 @@ class ScreenRecorder:
 
         # 导航按钮样式
         nav_btn_style = {
-            'font': ('Segoe UI', 10),
-            'bg': self.card_bg,
-            'fg': self.secondary_text,
-            'activebackground': self.accent_color,
-            'activeforeground': '#ffffff',
-            'relief': 'flat',
-            'anchor': 'w',
-            'padx': 15,
-            'pady': 12,
-            'cursor': 'hand2'
+            "font": ("Segoe UI", 10),
+            "bg": self.card_bg,
+            "fg": self.secondary_text,
+            "activebackground": self.accent_color,
+            "activeforeground": "#ffffff",
+            "relief": "flat",
+            "anchor": "w",
+            "padx": 15,
+            "pady": 12,
+            "cursor": "hand2",
         }
 
         # 导航按钮
         self.nav_buttons = {}
         nav_items = [
-            ('home', '🏠 首页'),
-            ('tutorial', '📖 使用教程'),
-            ('service', '📞 联系客服'),
-            ('about', 'ℹ️ 关于')
+            ("home", "🏠 首页"),
+            ("tutorial", "📖 使用教程"),
+            ("service", "📞 联系客服"),
+            ("about", "ℹ️ 关于"),
         ]
 
         for idx, (btn_id, btn_text) in enumerate(nav_items):
             btn = tk.Label(self.nav_frame, text=btn_text, **nav_btn_style)
             btn.pack(fill=tk.X, pady=1)
-            btn.bind('<Button-1>', lambda e, bid=btn_id: self.switch_tab(bid))
+            btn.bind("<Button-1>", lambda e, bid=btn_id: self.switch_tab(bid))
             self.nav_buttons[btn_id] = btn
 
         # 当前tab
-        self.current_tab = 'home'
+        self.current_tab = "home"
         self.highlight_nav(self.current_tab)
 
         # 右侧内容区域容器
         self.content_container = tk.Frame(self.root_container, bg=self.bg_color)
-        self.content_container.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.content_container.pack(
+            side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10
+        )
 
         # 创建4个tab页面
         self.tab_pages = {}
-        for tab_id in ['home', 'tutorial', 'service', 'about']:
+        for tab_id in ["home", "tutorial", "service", "about"]:
             page = tk.Frame(self.content_container, bg=self.bg_color)
             page.pack(fill=tk.BOTH, expand=True)
             self.tab_pages[tab_id] = page
@@ -510,31 +624,31 @@ class ScreenRecorder:
         self.create_about_tab()
 
         # 默认显示首页
-        self.show_tab('home')
+        self.show_tab("home")
 
     def show_mark_badge(self):
         """显示标记按钮角标"""
-            # 显示角标在按钮右侧
+        # 显示角标在按钮右侧
 
     def update_mini_progress_bar(self):
         """更新缩略窗口的进度条（时间轴和标记）"""
-        if not hasattr(self, 'mini_progress_canvas') or not self.mini_progress_canvas:
+        if not hasattr(self, "mini_progress_canvas") or not self.mini_progress_canvas:
             return
-        
+
         try:
             canvas = self.mini_progress_canvas
-            canvas.delete('all')
+            canvas.delete("all")
         except:
             return
-        
+
         width = canvas.winfo_width()
         height = canvas.winfo_height()
         if width == 0 or height == 0:
             return
-        
+
         padding = 20
         usable_width = width - 2 * padding
-        
+
         # 获取当前时间和总时长
         if self.recording:
             current = self.current_time if self.current_time > 0 else 0
@@ -542,26 +656,40 @@ class ScreenRecorder:
         else:
             current = self.current_time
             total = self.video_duration if self.video_duration > 0 else 1
-        
+
         progress = current / total if total > 0 else 0
-        
+
         if not self.recording:
-            print(f"\n[缩略功能区进度条调试] current_time={current:.2f}s, video_duration={self.video_duration:.2f}s, total={total:.2f}s")
-        
+            print(
+                f"\n[缩略功能区进度条调试] current_time={current:.2f}s, video_duration={self.video_duration:.2f}s, total={total:.2f}s"
+            )
+
         # 绘制背景
         canvas.create_rectangle(0, 0, width, height, fill="#2a2a2a", outline="")
-        
+
         # 绘制进度条底部
         progress_bar_y = height - 25
         progress_bar_height = 15
-        canvas.create_rectangle(padding, progress_bar_y, width - padding, progress_bar_y + progress_bar_height, 
-                               fill="#444", outline="")
-        
+        canvas.create_rectangle(
+            padding,
+            progress_bar_y,
+            width - padding,
+            progress_bar_y + progress_bar_height,
+            fill="#444",
+            outline="",
+        )
+
         # 绘制进度
         progress_width = int(usable_width * progress)
-        canvas.create_rectangle(padding, progress_bar_y, padding + progress_width, progress_bar_y + progress_bar_height, 
-                               fill="#4CAF50", outline="")
-        
+        canvas.create_rectangle(
+            padding,
+            progress_bar_y,
+            padding + progress_width,
+            progress_bar_y + progress_bar_height,
+            fill="#4CAF50",
+            outline="",
+        )
+
         # 绘制黄色标记
         if self.markers and total > 0:
             for idx, marker in enumerate(self.markers):
@@ -569,48 +697,73 @@ class ScreenRecorder:
                 if marker_time <= total:
                     marker_pos = padding + (marker_time / total) * usable_width
                     marker_pos = max(padding + 4, min(width - padding - 4, marker_pos))
-                    
+
                     marker_name = marker.get("name", str(idx + 1))
                     marker_top = progress_bar_y - 25
-                    
+
                     # 葫芦形标记
                     gourd_points = [
-                        marker_pos - 15, marker_top - 20,
-                        marker_pos - 8, marker_top - 25,
-                        marker_pos + 8, marker_top - 25,
-                        marker_pos + 15, marker_top - 20,
-                        marker_pos + 15, marker_top - 8,
-                        marker_pos + 10, marker_top - 4,
-                        marker_pos + 10, marker_top + 4,
-                        marker_pos + 5, marker_top + 8,
-                        marker_pos, marker_top + 15,
-                        marker_pos - 5, marker_top + 8,
-                        marker_pos - 10, marker_top + 4,
-                        marker_pos - 10, marker_top - 4,
-                        marker_pos - 15, marker_top - 8,
-                        marker_pos - 15, marker_top - 20,
+                        marker_pos - 15,
+                        marker_top - 20,
+                        marker_pos - 8,
+                        marker_top - 25,
+                        marker_pos + 8,
+                        marker_top - 25,
+                        marker_pos + 15,
+                        marker_top - 20,
+                        marker_pos + 15,
+                        marker_top - 8,
+                        marker_pos + 10,
+                        marker_top - 4,
+                        marker_pos + 10,
+                        marker_top + 4,
+                        marker_pos + 5,
+                        marker_top + 8,
+                        marker_pos,
+                        marker_top + 15,
+                        marker_pos - 5,
+                        marker_top + 8,
+                        marker_pos - 10,
+                        marker_top + 4,
+                        marker_pos - 10,
+                        marker_top - 4,
+                        marker_pos - 15,
+                        marker_top - 8,
+                        marker_pos - 15,
+                        marker_top - 20,
                     ]
-                    
-                    canvas.create_polygon(gourd_points, fill="#ffeb3b", outline="#fbc02d", width=1)
-                    canvas.create_text(marker_pos, marker_top - 8, text=marker_name, 
-                                      fill="#000000", font=('Arial', 8, 'bold'))
-        
+
+                    canvas.create_polygon(
+                        gourd_points, fill="#ffeb3b", outline="#fbc02d", width=1
+                    )
+                    canvas.create_text(
+                        marker_pos,
+                        marker_top - 8,
+                        text=marker_name,
+                        fill="#000000",
+                        font=("Arial", 8, "bold"),
+                    )
+
         # 更新mini时间标签
-        if hasattr(self, 'mini_time_label') and self.mini_time_label:
+        if hasattr(self, "mini_time_label") and self.mini_time_label:
             current_str = self.format_time(current)
             total_str = self.format_time(total)
             self.mini_time_label.config(text=f"{current_str} / {total_str}")
 
     def create_tutorial_tab(self):
         """创建使用教程tab"""
-        page = self.tab_pages['tutorial']
-        
+        page = self.tab_pages["tutorial"]
+
         # 标题
-        title = tk.Label(page, text="📖 使用教程",
-                        font=('Arial', 18, 'bold'),
-                        bg=self.bg_color, fg=self.accent_color)
+        title = tk.Label(
+            page,
+            text="📖 使用教程",
+            font=("Arial", 18, "bold"),
+            bg=self.bg_color,
+            fg=self.accent_color,
+        )
         title.pack(anchor=tk.W, pady=(20, 20), padx=20)
-        
+
         # 教程步骤
         steps = [
             ("1", "准备直播画面", "打开需要录制的直播页面或软件"),
@@ -618,152 +771,216 @@ class ScreenRecorder:
             ("3", "标记进度", "在直播过程中，点击「标记进度」或按空格键添加标记点"),
             ("4", "结束录屏", "直播结束后，点击「结束录屏」停止录制"),
             ("5", "截取视频", "在进度条上拖拽选择起止点，点击「截取视频」生成片段"),
-            ("6", "保存分享", "生成的视频片段保存在recordings文件夹中，可随时查看")
+            ("6", "保存分享", "生成的视频片段保存在recordings文件夹中，可随时查看"),
         ]
-        
+
         for num, step_title, step_desc in steps:
             step_frame = tk.Frame(page, bg=self.card_bg, padx=20, pady=15)
             step_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
-            
-            num_label = tk.Label(step_frame, text=num,
-                               font=('Arial', 16, 'bold'),
-                               bg=self.accent_color, fg='#ffffff',
-                               width=3, height=1)
+
+            num_label = tk.Label(
+                step_frame,
+                text=num,
+                font=("Arial", 16, "bold"),
+                bg=self.accent_color,
+                fg="#ffffff",
+                width=3,
+                height=1,
+            )
             num_label.pack(side=tk.LEFT, padx=(0, 15))
-            
+
             content_frame = tk.Frame(step_frame, bg=self.card_bg)
             content_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            
-            step_title_label = tk.Label(content_frame, text=step_title,
-                                       font=('Arial', 12, 'bold'),
-                                       bg=self.card_bg, fg=self.text_color)
+
+            step_title_label = tk.Label(
+                content_frame,
+                text=step_title,
+                font=("Arial", 12, "bold"),
+                bg=self.card_bg,
+                fg=self.text_color,
+            )
             step_title_label.pack(anchor=tk.W)
-            
-            step_desc_label = tk.Label(content_frame, text=step_desc,
-                                      font=('Arial', 10),
-                                      bg=self.card_bg, fg=self.secondary_text)
+
+            step_desc_label = tk.Label(
+                content_frame,
+                text=step_desc,
+                font=("Arial", 10),
+                bg=self.card_bg,
+                fg=self.secondary_text,
+            )
             step_desc_label.pack(anchor=tk.W, pady=(5, 0))
 
     def create_service_tab(self):
         """创建联系客服tab"""
-        page = self.tab_pages['service']
-        
+        page = self.tab_pages["service"]
+
         # 标题
-        title = tk.Label(page, text="📞 联系客服",
-                        font=('Arial', 18, 'bold'),
-                        bg=self.bg_color, fg=self.accent_color)
+        title = tk.Label(
+            page,
+            text="📞 联系客服",
+            font=("Arial", 18, "bold"),
+            bg=self.bg_color,
+            fg=self.accent_color,
+        )
         title.pack(anchor=tk.W, pady=(20, 20), padx=20)
-        
+
         # 联系信息卡片
         info_card = tk.Frame(page, bg=self.card_bg, padx=30, pady=30)
         info_card.pack(fill=tk.BOTH, expand=True, padx=20)
-        
+
         # 客服邮箱（从配置表读取）
-        email_value = '2501103849@qq.com'
+        email_value = "2501103849@qq.com"
         email_frame = tk.Frame(info_card, bg=self.card_bg)
         email_frame.pack(fill=tk.X, pady=(0, 20))
-        
-        tk.Label(email_frame, text="客服邮箱：",
-                font=('Arial', 12),
-                bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
-        
-        self.service_email_label = tk.Label(email_frame, text=email_value,
-                font=('Arial', 12),
-                bg=self.card_bg, fg=self.text_color)
+
+        tk.Label(
+            email_frame,
+            text="客服邮箱：",
+            font=("Arial", 12),
+            bg=self.card_bg,
+            fg=self.text_color,
+        ).pack(side=tk.LEFT)
+
+        self.service_email_label = tk.Label(
+            email_frame,
+            text=email_value,
+            font=("Arial", 12),
+            bg=self.card_bg,
+            fg=self.text_color,
+        )
         self.service_email_label.pack(side=tk.LEFT)
-        
+
         # 工作时间（从配置表读取）
-        time_value = '周一至周五 9:00-18:00'
+        time_value = "周一至周五 9:00-18:00"
         time_frame = tk.Frame(info_card, bg=self.card_bg)
         time_frame.pack(fill=tk.X)
-        
-        tk.Label(time_frame, text="工作时间：",
-                font=('Arial', 12),
-                bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
-        
-        self.service_time_label = tk.Label(time_frame, text=time_value,
-                font=('Arial', 12),
-                bg=self.card_bg, fg=self.text_color)
+
+        tk.Label(
+            time_frame,
+            text="工作时间：",
+            font=("Arial", 12),
+            bg=self.card_bg,
+            fg=self.text_color,
+        ).pack(side=tk.LEFT)
+
+        self.service_time_label = tk.Label(
+            time_frame,
+            text=time_value,
+            font=("Arial", 12),
+            bg=self.card_bg,
+            fg=self.text_color,
+        )
         self.service_time_label.pack(side=tk.LEFT)
-        
+
         # 提示
-        tip_label = tk.Label(page, text="* 遇到问题可通过以上方式联系我们",
-                           font=('Arial', 9),
-                           bg=self.bg_color, fg=self.secondary_text,
-                           pady=20)
+        tip_label = tk.Label(
+            page,
+            text="* 遇到问题可通过以上方式联系我们",
+            font=("Arial", 9),
+            bg=self.bg_color,
+            fg=self.secondary_text,
+            pady=20,
+        )
         tip_label.pack()
 
     def create_about_tab(self):
         """创建关于软件tab"""
-        page = self.tab_pages['about']
-        
+        page = self.tab_pages["about"]
+
         # 标题
-        title = tk.Label(page, text="ℹ️ 关于软件",
-                        font=('Arial', 18, 'bold'),
-                        bg=self.bg_color, fg=self.accent_color)
+        title = tk.Label(
+            page,
+            text="ℹ️ 关于软件",
+            font=("Arial", 18, "bold"),
+            bg=self.bg_color,
+            fg=self.accent_color,
+        )
         title.pack(anchor=tk.W, pady=(20, 20), padx=20)
-        
+
         # 关于信息卡片
         about_card = tk.Frame(page, bg=self.card_bg, padx=30, pady=30)
         about_card.pack(fill=tk.BOTH, expand=True, padx=20)
-        
+
         # 软件名称
-        name_label = tk.Label(about_card, text="直播录屏标记精灵",
-                             font=('Arial', 16, 'bold'),
-                             bg=self.card_bg, fg=self.accent_color)
+        name_label = tk.Label(
+            about_card,
+            text="直播录屏标记精灵",
+            font=("Arial", 16, "bold"),
+            bg=self.card_bg,
+            fg=self.accent_color,
+        )
         name_label.pack(pady=(0, 10))
-        
+
         # 版本号
-        version_label = tk.Label(about_card, text=f"版本：{CURRENT_VERSION}",
-                                font=('Arial', 11),
-                                bg=self.card_bg, fg=self.text_color)
+        version_label = tk.Label(
+            about_card,
+            text=f"版本：{CURRENT_VERSION}",
+            font=("Arial", 11),
+            bg=self.card_bg,
+            fg=self.text_color,
+        )
         version_label.pack()
-        
+
         # 法律声明和用户协议区域
         link_frame = tk.Frame(about_card, bg=self.card_bg)
         link_frame.pack(pady=20)
-        
+
         # 法律声明（超链接样式）
-        legal_label = tk.Label(link_frame, text="法律声明", 
-                              font=('Arial', 10, 'underline'),
-                              bg=self.card_bg, fg=self.text_color,
-                              cursor='hand2')
+        legal_label = tk.Label(
+            link_frame,
+            text="法律声明",
+            font=("Arial", 10, "underline"),
+            bg=self.card_bg,
+            fg=self.text_color,
+            cursor="hand2",
+        )
         legal_label.pack(side=tk.LEFT, padx=15)
-        legal_label.bind('<Button-1>', lambda e: self.open_legal_notice())
-        
+        legal_label.bind("<Button-1>", lambda e: self.open_legal_notice())
+
         # 分隔符
-        sep_label = tk.Label(link_frame, text="|", 
-                           font=('Arial', 10),
-                           bg=self.card_bg, fg=self.secondary_text)
+        sep_label = tk.Label(
+            link_frame,
+            text="|",
+            font=("Arial", 10),
+            bg=self.card_bg,
+            fg=self.secondary_text,
+        )
         sep_label.pack(side=tk.LEFT, padx=5)
-        
+
         # 用户协议（超链接样式）
-        agreement_label = tk.Label(link_frame, text="用户协议", 
-                                  font=('Arial', 10, 'underline'),
-                                  bg=self.card_bg, fg=self.text_color,
-                                  cursor='hand2')
+        agreement_label = tk.Label(
+            link_frame,
+            text="用户协议",
+            font=("Arial", 10, "underline"),
+            bg=self.card_bg,
+            fg=self.text_color,
+            cursor="hand2",
+        )
         agreement_label.pack(side=tk.LEFT, padx=15)
-        agreement_label.bind('<Button-1>', lambda e: self.open_user_agreement())
-        
+        agreement_label.bind("<Button-1>", lambda e: self.open_user_agreement())
+
         # 版权信息
-        copyright_label = tk.Label(page, 
-                                 text="© 2024 直播录屏标记精灵 版权所有",
-                                 font=('Arial', 9),
-                                 bg=self.bg_color, fg=self.secondary_text,
-                                 pady=20)
+        copyright_label = tk.Label(
+            page,
+            text="© 2024 直播录屏标记精灵 版权所有",
+            font=("Arial", 9),
+            bg=self.bg_color,
+            fg=self.secondary_text,
+            pady=20,
+        )
         copyright_label.pack()
 
     def open_legal_notice(self):
         """打开法律声明"""
-        url = 'https://Wadeonetest.github.io/Wadeonetest-zbtip-zbtipfree/legal.html'
+        url = "https://Wadeonetest.github.io/Wadeonetest-zbtip-zbtipfree/legal.html"
         if url:
             webbrowser.open(url)
         else:
             messagebox.showinfo("提示", "法律声明链接未配置")
-    
+
     def open_user_agreement(self):
         """打开用户协议"""
-        url = 'https://Wadeonetest.github.io/Wadeonetest-zbtip-zbtipfree/terms.html'
+        url = "https://Wadeonetest.github.io/Wadeonetest-zbtip-zbtipfree/terms.html"
         if url:
             webbrowser.open(url)
         else:
@@ -773,13 +990,13 @@ class ScreenRecorder:
         """高亮导航按钮"""
         for btn_id, btn in self.nav_buttons.items():
             if btn_id == tab_id:
-                btn.config(bg=self.accent_color, fg='#ffffff')
+                btn.config(bg=self.accent_color, fg="#ffffff")
             else:
                 btn.config(bg=self.card_bg, fg=self.secondary_text)
 
     def switch_tab(self, tab_id):
         """切换tab"""
-        
+
         self.current_tab = tab_id
         self.highlight_nav(tab_id)
         self.show_tab(tab_id)
@@ -794,44 +1011,56 @@ class ScreenRecorder:
 
     def create_home_tab(self):
         """创建首页tab"""
-        page = self.tab_pages['home']
-        
+        page = self.tab_pages["home"]
+
         # 主框架
         self.main_frame = tk.Frame(page, bg=self.bg_color)
         self.main_frame.pack(fill=tk.BOTH, expand=True)
-        
+
         # 左侧框架
         self.left_frame = tk.Frame(self.main_frame, bg=self.bg_color)
         self.left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 16))
-        
+
         # 右侧面板宽度
         self.right_panel_width = 200
-        
+
         # 右侧视频片段面板 - 现代化设计
-        self.right_frame = ttk.LabelFrame(self.main_frame, text="视频片段", padding=16, style='Custom.TLabelframe')
+        self.right_frame = ttk.LabelFrame(
+            self.main_frame, text="视频片段", padding=16, style="Custom.TLabelframe"
+        )
         self.right_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 10), pady=10)
         self.right_frame.configure(width=self.right_panel_width)
-        
+
         # 视频资料库面板 - 现代化设计
-        self.library_frame = ttk.LabelFrame(self.main_frame, text="视频资料库", padding=16, style='Custom.TLabelframe')
-        self.library_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 10), pady=10)
+        self.library_frame = ttk.LabelFrame(
+            self.main_frame, text="视频资料库", padding=16, style="Custom.TLabelframe"
+        )
+        self.library_frame.pack(
+            side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 10), pady=10
+        )
         self.library_frame.pack_forget()  # 初始隐藏
-        
+
         # 视频资料库搜索框
         search_frame = tk.Frame(self.library_frame, bg=self.card_bg)
         search_frame.pack(fill=tk.X, pady=(0, 10))
-        
+
         self.library_search_var = tk.StringVar()
-        self.library_search_entry = ttk.Entry(search_frame, textvariable=self.library_search_var, style='Custom.TEntry')
-        self.library_search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        self.library_search_entry = ttk.Entry(
+            search_frame, textvariable=self.library_search_var, style="Custom.TEntry"
+        )
+        self.library_search_entry.pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10)
+        )
         self.library_search_entry.bind("<FocusIn>", self.show_folder_structure)
         self.library_search_entry.bind("<KeyRelease>", self.search_files)
-        
-        ttk.Button(search_frame, text="搜索", command=self.search_files, style='Custom.TButton').pack(side=tk.RIGHT)
-        
+
+        ttk.Button(
+            search_frame, text="搜索", command=self.search_files, style="Custom.TButton"
+        ).pack(side=tk.RIGHT)
+
         # 创建文件夹和文件图标
         # 文件夹图标（黄色文件夹形状）
-        folder_img = Image.new('RGBA', (16, 16), (255, 255, 255, 0))
+        folder_img = Image.new("RGBA", (16, 16), (255, 255, 255, 0))
         folder_data = folder_img.load()
         # 绘制文件夹主体
         for x in range(16):
@@ -848,70 +1077,118 @@ class ScreenRecorder:
             for y in range(10, 14):
                 folder_data[x, y] = (255, 203, 52, 255)  # 浅黄色
         self.folder_icon = ImageTk.PhotoImage(folder_img)
-        
+
         # 文件图标（绿色实心方格）
-        file_img = Image.new('RGB', (16, 16), color='#4CAF50')
+        file_img = Image.new("RGB", (16, 16), color="#4CAF50")
         self.file_icon = ImageTk.PhotoImage(file_img)
-        
+
         # 文件夹树状结构
-        self.folder_tree = ttk.Treeview(self.library_frame, style='Custom.Treeview')
+        self.folder_tree = ttk.Treeview(self.library_frame, style="Custom.Treeview")
         self.folder_tree.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         self.folder_tree.bind("<Double-1>", self.open_selected_folder)
-        
+
         # 添加高亮样式
-        self.folder_tree.tag_configure('highlight', background='#34a853', foreground='#ffffff')
-        
+        self.folder_tree.tag_configure(
+            "highlight", background="#34a853", foreground="#ffffff"
+        )
+
         # 搜索结果统计标签
-        self.search_stats_label = tk.Label(self.library_frame, text="", 
-                                         bg=self.card_bg, 
-                                         fg=self.secondary_text, 
-                                         font=('Segoe UI', 8))
+        self.search_stats_label = tk.Label(
+            self.library_frame,
+            text="",
+            bg=self.card_bg,
+            fg=self.secondary_text,
+            font=("Segoe UI", 8),
+        )
         self.search_stats_label.pack(fill=tk.X, pady=(0, 10))
-        
+
         # 资料库控制按钮
         library_buttons = tk.Frame(self.library_frame, bg=self.card_bg)
         library_buttons.pack(fill=tk.X, pady=(0, 10))
-        
-        ttk.Button(library_buttons, text="打开", command=self.open_current_folder, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(library_buttons, text="新建文件夹", command=self.create_new_folder, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(library_buttons, text="导入文件", command=self.import_file, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(library_buttons, text="重命名", command=self.rename_selected_item, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(library_buttons, text="删除", command=self.delete_selected_item, style='Danger.TButton').pack(side=tk.LEFT)
-        
 
-        
+        ttk.Button(
+            library_buttons,
+            text="打开",
+            command=self.open_current_folder,
+            style="Custom.TButton",
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(
+            library_buttons,
+            text="新建文件夹",
+            command=self.create_new_folder,
+            style="Custom.TButton",
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(
+            library_buttons,
+            text="导入文件",
+            command=self.import_file,
+            style="Custom.TButton",
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(
+            library_buttons,
+            text="重命名",
+            command=self.rename_selected_item,
+            style="Custom.TButton",
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(
+            library_buttons,
+            text="删除",
+            command=self.delete_selected_item,
+            style="Danger.TButton",
+        ).pack(side=tk.LEFT)
+
         # 视频预览 - 现代化卡片式设计
-        self.video_frame = ttk.LabelFrame(self.left_frame, text="视频预览", padding=16, style='Custom.TLabelframe')
+        self.video_frame = ttk.LabelFrame(
+            self.left_frame, text="视频预览", padding=16, style="Custom.TLabelframe"
+        )
         self.video_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 10), padx=10)
-        
+
         # 视频文件名区域框架
         filename_frame = tk.Frame(self.video_frame, bg=self.card_bg)
         filename_frame.pack(side=tk.TOP, anchor=tk.W, pady=(0, 8), fill=tk.X)
-        
+
         # 视频文件名标签
-        self.video_filename_label = tk.Label(filename_frame, text="", 
-                                           font=('Arial', 10),
-                                           bg=self.card_bg, fg="#999999")
+        self.video_filename_label = tk.Label(
+            filename_frame, text="", font=("Arial", 10), bg=self.card_bg, fg="#999999"
+        )
         self.video_filename_label.pack(side=tk.LEFT, anchor=tk.W)
-        
+
         # 修改文件名按钮
-        self.rename_btn = tk.Button(filename_frame, text="✏️", command=self.rename_video_file,
-                                   font=('Segoe UI Emoji', 11), bg=self.light_bg, fg="#ffffff",
-                                   relief=tk.FLAT, cursor='hand2', bd=0,
-                                   highlightthickness=0,
-                                   padx=6, pady=2)
+        self.rename_btn = tk.Button(
+            filename_frame,
+            text="✏️",
+            command=self.rename_video_file,
+            font=("Segoe UI Emoji", 11),
+            bg=self.light_bg,
+            fg="#ffffff",
+            relief=tk.FLAT,
+            cursor="hand2",
+            bd=0,
+            highlightthickness=0,
+            padx=6,
+            pady=2,
+        )
         self.rename_btn.pack(side=tk.LEFT, padx=(10, 0))
         self.rename_btn.pack_forget()  # 初始隐藏
-        
+
         # 文件位置按钮
-        self.location_btn = tk.Button(filename_frame, text="📁", command=self.open_video_location,
-                                   font=('Segoe UI Emoji', 11), bg=self.light_bg, fg="#ffffff",
-                                   relief=tk.FLAT, cursor='hand2', bd=0,
-                                   highlightthickness=0,
-                                   padx=6, pady=2)
+        self.location_btn = tk.Button(
+            filename_frame,
+            text="📁",
+            command=self.open_video_location,
+            font=("Segoe UI Emoji", 11),
+            bg=self.light_bg,
+            fg="#ffffff",
+            relief=tk.FLAT,
+            cursor="hand2",
+            bd=0,
+            highlightthickness=0,
+            padx=6,
+            pady=2,
+        )
         self.location_btn.pack(side=tk.LEFT, padx=(10, 0))
         self.location_btn.pack_forget()  # 初始隐藏
-        
+
         # 添加按钮悬停效果
         def on_rename_enter(e):
             # 平滑过渡到悬停颜色
@@ -921,6 +1198,7 @@ class ScreenRecorder:
                 self.rename_btn.config(bg=bg_color)
                 self.root.update()
                 self.root.after(10)
+
         def on_rename_leave(e):
             # 平滑过渡到原始颜色
             for i in range(10):
@@ -929,9 +1207,10 @@ class ScreenRecorder:
                 self.rename_btn.config(bg=bg_color)
                 self.root.update()
                 self.root.after(10)
+
         self.rename_btn.bind("<Enter>", on_rename_enter)
         self.rename_btn.bind("<Leave>", on_rename_leave)
-        
+
         # 文件位置按钮悬停效果
         def on_location_enter(e):
             # 平滑过渡到悬停颜色
@@ -941,6 +1220,7 @@ class ScreenRecorder:
                 self.location_btn.config(bg=bg_color)
                 self.root.update()
                 self.root.after(10)
+
         def on_location_leave(e):
             # 平滑过渡到原始颜色
             for i in range(10):
@@ -949,130 +1229,213 @@ class ScreenRecorder:
                 self.location_btn.config(bg=bg_color)
                 self.root.update()
                 self.root.after(10)
+
         self.location_btn.bind("<Enter>", on_location_enter)
         self.location_btn.bind("<Leave>", on_location_leave)
-        
+
         # 视频画布 - 圆角边框效果
-        self.canvas = tk.Canvas(self.video_frame, bg="#151515", 
-                              highlightthickness=1, highlightbackground=self.border_color)
+        self.canvas = tk.Canvas(
+            self.video_frame,
+            bg="#151515",
+            highlightthickness=1,
+            highlightbackground=self.border_color,
+        )
         self.canvas.pack(fill=tk.BOTH, expand=True)
-        
+
         # 视频控制栏
         video_controls = tk.Frame(self.video_frame, bg=self.card_bg)
         video_controls.pack(fill=tk.X, pady=(16, 0))
-        
+
         # 播放/暂停按钮
         button_frame = tk.Frame(video_controls, bg=self.card_bg)
         button_frame.pack(side=tk.LEFT, fill=tk.Y)
-        
-        self.play_btn = ttk.Button(button_frame, text="播放", command=self.play_video, 
-                                  state=tk.DISABLED, style='Custom.TButton')
+
+        self.play_btn = ttk.Button(
+            button_frame,
+            text="播放",
+            command=self.play_video,
+            state=tk.DISABLED,
+            style="Custom.TButton",
+        )
         self.play_btn.pack(side=tk.LEFT, padx=(0, 12))
-        
-        self.pause_video_btn = ttk.Button(button_frame, text="暂停", command=self.pause_video, 
-                                        state=tk.DISABLED, style='Custom.TButton')
+
+        self.pause_video_btn = ttk.Button(
+            button_frame,
+            text="暂停",
+            command=self.pause_video,
+            state=tk.DISABLED,
+            style="Custom.TButton",
+        )
         self.pause_video_btn.pack(side=tk.LEFT)
-        
+
         # 视频状态提示
-        self.status_label = tk.Label(video_controls, text="状态: 未播放", 
-                                    bg=self.card_bg, fg=self.secondary_text, 
-                                    font=('Segoe UI', 9))
+        self.status_label = tk.Label(
+            video_controls,
+            text="状态: 未播放",
+            bg=self.card_bg,
+            fg=self.secondary_text,
+            font=("Segoe UI", 9),
+        )
         self.status_label.pack(side=tk.RIGHT, padx=10)
-        
+
         # 进度条区域 - 卡片式设计
-        self.progress_frame = ttk.LabelFrame(self.left_frame, text="进度", padding=16, style='Custom.TLabelframe')
+        self.progress_frame = ttk.LabelFrame(
+            self.left_frame, text="进度", padding=16, style="Custom.TLabelframe"
+        )
         self.progress_frame.pack(fill=tk.X)
-        
+
         # 进度画布
-        self.progress_canvas = tk.Canvas(self.progress_frame, height=120, bg=self.card_bg, 
-                                      cursor="hand1", highlightthickness=1, 
-                                      highlightbackground=self.border_color)
+        self.progress_canvas = tk.Canvas(
+            self.progress_frame,
+            height=120,
+            bg=self.card_bg,
+            cursor="hand1",
+            highlightthickness=1,
+            highlightbackground=self.border_color,
+        )
         self.progress_canvas.pack(fill=tk.X, pady=(12, 0))
-        self.progress_canvas.bind('<Button-1>', self.on_progress_click)
-        self.progress_canvas.bind('<B1-Motion>', self.on_progress_drag)
-        self.progress_canvas.bind('<ButtonRelease-1>', self.on_progress_release)
-        
+        self.progress_canvas.bind("<Button-1>", self.on_progress_click)
+        self.progress_canvas.bind("<B1-Motion>", self.on_progress_drag)
+        self.progress_canvas.bind("<ButtonRelease-1>", self.on_progress_release)
+
         # 时间标签
-        self.time_label = tk.Label(self.progress_frame, text="00:00 / 00:00", 
-                                  font=('Arial', 9),
-                                  bg=self.card_bg, fg=self.secondary_text)
+        self.time_label = tk.Label(
+            self.progress_frame,
+            text="00:00 / 00:00",
+            font=("Arial", 9),
+            bg=self.card_bg,
+            fg=self.secondary_text,
+        )
         self.time_label.pack(side=tk.RIGHT, pady=(12, 0))
-        
+
         # 常驻提示区域
         self.hints_frame = tk.Frame(self.progress_frame, bg=self.card_bg)
         self.hints_frame.pack(fill=tk.X, pady=(12, 0))
-        
+
         # 进度旋钮提示
         self.knob_hint_frame = tk.Frame(self.hints_frame, bg=self.card_bg)
         self.knob_hint_frame.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
-        self.knob_hint_label = tk.Label(self.knob_hint_frame, text="进度: 00:00:00", 
-                                       bg=self.card_bg, fg=self.text_color, font=('Segoe UI', 9))
+        self.knob_hint_label = tk.Label(
+            self.knob_hint_frame,
+            text="进度: 00:00:00",
+            bg=self.card_bg,
+            fg=self.text_color,
+            font=("Segoe UI", 9),
+        )
         self.knob_hint_label.pack(side=tk.LEFT, padx=5)
-        self.knob_hint_entry = ttk.Entry(self.knob_hint_frame, width=15, style='Custom.TEntry')
+        self.knob_hint_entry = ttk.Entry(
+            self.knob_hint_frame, width=15, style="Custom.TEntry"
+        )
         self.knob_hint_entry.pack(side=tk.LEFT, padx=5)
-        self.knob_hint_entry.bind('<Return>', self.on_knob_hint_change)
-        self.knob_hint_entry.bind('<FocusIn>', lambda e: self.knob_hint_frame.configure(cursor='ibeam'))
-        self.knob_hint_entry.bind('<FocusOut>', lambda e: self.knob_hint_frame.configure(cursor=''))
-        
+        self.knob_hint_entry.bind("<Return>", self.on_knob_hint_change)
+        self.knob_hint_entry.bind(
+            "<FocusIn>", lambda e: self.knob_hint_frame.configure(cursor="ibeam")
+        )
+        self.knob_hint_entry.bind(
+            "<FocusOut>", lambda e: self.knob_hint_frame.configure(cursor="")
+        )
+
         # 入点提示
         self.in_point_hint_frame = tk.Frame(self.hints_frame, bg=self.card_bg)
         self.in_point_hint_frame.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
-        self.in_point_hint_label = tk.Label(self.in_point_hint_frame, text="截取入点: 00:00:00", 
-                                          bg=self.card_bg, fg=self.text_color, font=('Segoe UI', 9))
+        self.in_point_hint_label = tk.Label(
+            self.in_point_hint_frame,
+            text="截取入点: 00:00:00",
+            bg=self.card_bg,
+            fg=self.text_color,
+            font=("Segoe UI", 9),
+        )
         self.in_point_hint_label.pack(side=tk.LEFT, padx=5)
-        self.in_point_hint_entry = ttk.Entry(self.in_point_hint_frame, width=15, style='Custom.TEntry')
+        self.in_point_hint_entry = ttk.Entry(
+            self.in_point_hint_frame, width=15, style="Custom.TEntry"
+        )
         self.in_point_hint_entry.pack(side=tk.LEFT, padx=5)
-        self.in_point_hint_entry.bind('<Return>', self.on_in_point_hint_change)
-        self.in_point_hint_entry.bind('<FocusIn>', lambda e: self.in_point_hint_frame.configure(cursor='ibeam'))
-        self.in_point_hint_entry.bind('<FocusOut>', lambda e: self.in_point_hint_frame.configure(cursor=''))
-        
+        self.in_point_hint_entry.bind("<Return>", self.on_in_point_hint_change)
+        self.in_point_hint_entry.bind(
+            "<FocusIn>", lambda e: self.in_point_hint_frame.configure(cursor="ibeam")
+        )
+        self.in_point_hint_entry.bind(
+            "<FocusOut>", lambda e: self.in_point_hint_frame.configure(cursor="")
+        )
+
         # 出点提示
         self.out_point_hint_frame = tk.Frame(self.hints_frame, bg=self.card_bg)
         self.out_point_hint_frame.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
-        self.out_point_hint_label = tk.Label(self.out_point_hint_frame, text="截取出点: 00:00:00", 
-                                           bg=self.card_bg, fg=self.text_color, font=('Segoe UI', 9))
+        self.out_point_hint_label = tk.Label(
+            self.out_point_hint_frame,
+            text="截取出点: 00:00:00",
+            bg=self.card_bg,
+            fg=self.text_color,
+            font=("Segoe UI", 9),
+        )
         self.out_point_hint_label.pack(side=tk.LEFT, padx=5)
-        self.out_point_hint_entry = ttk.Entry(self.out_point_hint_frame, width=15, style='Custom.TEntry')
+        self.out_point_hint_entry = ttk.Entry(
+            self.out_point_hint_frame, width=15, style="Custom.TEntry"
+        )
         self.out_point_hint_entry.pack(side=tk.LEFT, padx=5)
-        self.out_point_hint_entry.bind('<Return>', self.on_out_point_hint_change)
-        self.out_point_hint_entry.bind('<FocusIn>', lambda e: self.out_point_hint_frame.configure(cursor='ibeam'))
-        self.out_point_hint_entry.bind('<FocusOut>', lambda e: self.out_point_hint_frame.configure(cursor=''))
-        
+        self.out_point_hint_entry.bind("<Return>", self.on_out_point_hint_change)
+        self.out_point_hint_entry.bind(
+            "<FocusIn>", lambda e: self.out_point_hint_frame.configure(cursor="ibeam")
+        )
+        self.out_point_hint_entry.bind(
+            "<FocusOut>", lambda e: self.out_point_hint_frame.configure(cursor="")
+        )
+
         # 片段列表
         clip_list_frame = tk.Frame(self.right_frame)
         clip_list_frame.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
-        
-        self.clip_listbox = tk.Listbox(clip_list_frame,
-                                     width=35,
-                                     bg=self.card_bg,
-                                     fg=self.text_color,
-                                     highlightthickness=1,
-                                     highlightbackground=self.accent_color,
-                                     selectbackground=self.light_bg,
-                                     selectforeground=self.text_color,
-                                     font=('Arial', 9),
-                                     bd=1,
-                                     relief='solid',
-                                     activestyle='none')
+
+        self.clip_listbox = tk.Listbox(
+            clip_list_frame,
+            width=35,
+            bg=self.card_bg,
+            fg=self.text_color,
+            highlightthickness=1,
+            highlightbackground=self.accent_color,
+            selectbackground=self.light_bg,
+            selectforeground=self.text_color,
+            font=("Arial", 9),
+            bd=1,
+            relief="solid",
+            activestyle="none",
+        )
         self.clip_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
+
         # 片段列表滚动条
-        clip_scrollbar = ttk.Scrollbar(clip_list_frame, orient=tk.VERTICAL, command=self.clip_listbox.yview)
+        clip_scrollbar = ttk.Scrollbar(
+            clip_list_frame, orient=tk.VERTICAL, command=self.clip_listbox.yview
+        )
         clip_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.clip_listbox.configure(yscrollcommand=clip_scrollbar.set)
-        
+
         # 片段控制按钮
         clip_buttons = tk.Frame(self.right_frame, bg=self.card_bg)
         clip_buttons.pack(fill=tk.X, pady=(16, 0))
-        
-        ttk.Button(clip_buttons, text="播放选中", command=self.play_selected_clip, 
-                  style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Button(clip_buttons, text="重命名", command=self.rename_selected_clip, 
-                  style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Button(clip_buttons, text="文件位置", command=self.open_clip_location, 
-                  style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Button(clip_buttons, text="删除片段", command=self.delete_selected_clip, 
-                  style='Danger.TButton').pack(side=tk.LEFT)
+
+        ttk.Button(
+            clip_buttons,
+            text="播放选中",
+            command=self.play_selected_clip,
+            style="Custom.TButton",
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Button(
+            clip_buttons,
+            text="重命名",
+            command=self.rename_selected_clip,
+            style="Custom.TButton",
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Button(
+            clip_buttons,
+            text="文件位置",
+            command=self.open_clip_location,
+            style="Custom.TButton",
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Button(
+            clip_buttons,
+            text="删除片段",
+            command=self.delete_selected_clip,
+            style="Danger.TButton",
+        ).pack(side=tk.LEFT)
         # 通知窗口
         self.notification = tk.Toplevel(self.root)
         self.notification.title("通知")
@@ -1080,20 +1443,32 @@ class ScreenRecorder:
         self.notification.transient(self.root)
         self.notification.withdraw()
         self.notification.configure(bg=self.card_bg)
-        
-        self.notification_label = tk.Label(self.notification, text="", 
-                                         font=('Arial', 10),
-                                         bg=self.card_bg, fg=self.text_color)
+
+        self.notification_label = tk.Label(
+            self.notification,
+            text="",
+            font=("Arial", 10),
+            bg=self.card_bg,
+            fg=self.text_color,
+        )
         self.notification_label.pack(pady=18)
-        
+
         notification_buttons = tk.Frame(self.notification, bg=self.card_bg)
         notification_buttons.pack(pady=12)
-        
-        ttk.Button(notification_buttons, text="编辑", command=self.open_marker_edit, 
-                  style='Custom.TButton').pack(side=tk.LEFT, padx=10)
-        ttk.Button(notification_buttons, text="确定", command=self.notification.withdraw, 
-                  style='Accent.TButton').pack(side=tk.LEFT, padx=10)
-        
+
+        ttk.Button(
+            notification_buttons,
+            text="编辑",
+            command=self.open_marker_edit,
+            style="Custom.TButton",
+        ).pack(side=tk.LEFT, padx=10)
+        ttk.Button(
+            notification_buttons,
+            text="确定",
+            command=self.notification.withdraw,
+            style="Accent.TButton",
+        ).pack(side=tk.LEFT, padx=10)
+
         # 标记编辑窗口
         self.marker_edit_window = tk.Toplevel(self.root)
         self.marker_edit_window.title("编辑标记")
@@ -1101,39 +1476,62 @@ class ScreenRecorder:
         self.marker_edit_window.transient(self.root)
         self.marker_edit_window.withdraw()
         self.marker_edit_window.configure(bg=self.card_bg)
-        
-        tk.Label(self.marker_edit_window, text="标记名称:", 
-                font=('Arial', 10),
-                bg=self.card_bg, fg=self.text_color).pack(pady=10)
+
+        tk.Label(
+            self.marker_edit_window,
+            text="标记名称:",
+            font=("Arial", 10),
+            bg=self.card_bg,
+            fg=self.text_color,
+        ).pack(pady=10)
         self.marker_name_var = tk.StringVar()
-        ttk.Entry(self.marker_edit_window, textvariable=self.marker_name_var, 
-                 style='Custom.TEntry').pack(fill=tk.X, padx=20, pady=6)
-        
-        tk.Label(self.marker_edit_window, text="备注:", 
-                font=('Arial', 10),
-                bg=self.card_bg, fg=self.text_color).pack(pady=10)
+        ttk.Entry(
+            self.marker_edit_window,
+            textvariable=self.marker_name_var,
+            style="Custom.TEntry",
+        ).pack(fill=tk.X, padx=20, pady=6)
+
+        tk.Label(
+            self.marker_edit_window,
+            text="备注:",
+            font=("Arial", 10),
+            bg=self.card_bg,
+            fg=self.text_color,
+        ).pack(pady=10)
         self.marker_note_var = tk.StringVar()
-        ttk.Entry(self.marker_edit_window, textvariable=self.marker_note_var, 
-                 style='Custom.TEntry').pack(fill=tk.X, padx=20, pady=6)
-        
+        ttk.Entry(
+            self.marker_edit_window,
+            textvariable=self.marker_note_var,
+            style="Custom.TEntry",
+        ).pack(fill=tk.X, padx=20, pady=6)
+
         button_frame = tk.Frame(self.marker_edit_window, bg=self.card_bg)
         button_frame.pack(pady=15)
-        
-        ttk.Button(button_frame, text="保存", command=self.save_marker_edit, 
-                  style='Accent.TButton').pack(side=tk.LEFT, padx=12)
-        ttk.Button(button_frame, text="取消", command=self.marker_edit_window.withdraw, 
-                  style='Custom.TButton').pack(side=tk.LEFT, padx=12)
-        
+
+        ttk.Button(
+            button_frame,
+            text="保存",
+            command=self.save_marker_edit,
+            style="Accent.TButton",
+        ).pack(side=tk.LEFT, padx=12)
+        ttk.Button(
+            button_frame,
+            text="取消",
+            command=self.marker_edit_window.withdraw,
+            style="Custom.TButton",
+        ).pack(side=tk.LEFT, padx=12)
+
         self.current_marker_index = -1
-        
+
         # 添加空格键快捷键绑定 - 标记进度
         def on_space_key(event):
             # 如果正在录屏且处于暂停状态，不执行标记
             if self.recording and self.paused:
-                return 'break'
+                return "break"
             self.mark_progress()
-            return 'break'  # 阻止空格键的默认行为
-        self.root.bind('<space>', on_space_key)
+            return "break"  # 阻止空格键的默认行为
+
+        self.root.bind("<space>", on_space_key)
 
     def start_recording(self):
         screen_width, screen_height = pyautogui.size()
@@ -1141,13 +1539,13 @@ class ScreenRecorder:
         self.y = 0
         self.width = screen_width
         self.height = screen_height
-        
+
         self.recording = True
         self.paused = False
-        
+
         # 最小化主窗口
         self.root.iconify()
-        
+
         # 录制时：显示暂停、结束、标记按钮，隐藏开始按钮
         self.start_btn.grid_remove()
         self.pause_btn.grid(row=0, column=0, padx=6, pady=2)
@@ -1155,18 +1553,18 @@ class ScreenRecorder:
         self.mark_btn.grid(row=0, column=2, padx=6, pady=2)
         # 显示角标在按钮下方（row=1, column=2）
         self.clip_btn.config(state=tk.DISABLED)
-        
+
         # 取消截取视频状态
         self.clip_mode = False
         self.clip_btn.config(text="截取视频", state=tk.NORMAL)
         self.finish_clip_btn.config(state=tk.DISABLED)
-        
+
         # 设置视频文件路径
-        timestamp = time.strftime('%Y%m%d_%H%M%S')
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
         # 获取应用程序所在目录
-        if getattr(sys, 'frozen', False):
+        if getattr(sys, "frozen", False):
             # 打包后
-            if hasattr(sys, '_MEIPASS'):
+            if hasattr(sys, "_MEIPASS"):
                 # PyInstaller单文件模式
                 current_dir = os.path.dirname(sys.executable)
             else:
@@ -1175,19 +1573,23 @@ class ScreenRecorder:
         else:
             # 未打包
             current_dir = os.path.dirname(os.path.abspath(__file__))
-        
+
         # 创建会话目录
-        self.current_session_dir = os.path.join(current_dir, self.recordings_dir, timestamp)
+        self.current_session_dir = os.path.join(
+            current_dir, self.recordings_dir, timestamp
+        )
         if not os.path.exists(self.current_session_dir):
             os.makedirs(self.current_session_dir)
-        
+
         # 创建截取视频文件夹
         clip_folder = os.path.join(self.current_session_dir, self.clip_dir)
         if not os.path.exists(clip_folder):
             os.makedirs(clip_folder)
-        
+
         # 设置视频文件路径
-        self.video_file = os.path.join(self.current_session_dir, f"recording_{timestamp}.avi")
+        self.video_file = os.path.join(
+            self.current_session_dir, f"recording_{timestamp}.mp4"
+        )
 
         # 重置标记和片段相关变量
         self.markers = []
@@ -1206,17 +1608,25 @@ class ScreenRecorder:
         self.recorded_frames = 0
 
         # 设置视频文件路径（临时，不含音频）
-        self.video_file_no_audio = os.path.join(self.current_session_dir, f"recording_{timestamp}_no_audio.avi")
+        self.video_file_no_audio = os.path.join(
+            self.current_session_dir, f"recording_{timestamp}_no_audio.avi"
+        )
         # 现在不在录制时写入，而是结束后重新编码
         print(f"[录屏] 视频文件路径: {self.video_file_no_audio}")
 
         # 设置音频文件路径
-        self.audio_file = os.path.join(self.current_session_dir, f"recording_{timestamp}.wav")
+        self.audio_file = os.path.join(
+            self.current_session_dir, f"recording_{timestamp}.wav"
+        )
         print(f"[录屏] 音频文件路径: {self.audio_file}")
-        
+
         # 初始化时间戳文件路径
-        self.video_timestamps_file = os.path.join(self.current_session_dir, f"recording_{timestamp}_video_timestamps.txt")
-        self.audio_timestamps_file = os.path.join(self.current_session_dir, f"recording_{timestamp}_audio_timestamps.txt")
+        self.video_timestamps_file = os.path.join(
+            self.current_session_dir, f"recording_{timestamp}_video_timestamps.txt"
+        )
+        self.audio_timestamps_file = os.path.join(
+            self.current_session_dir, f"recording_{timestamp}_audio_timestamps.txt"
+        )
 
         # 关键：先初始化并打开音频设备（同步操作），确保准备好
         self._init_audio_recorder()
@@ -1240,6 +1650,7 @@ class ScreenRecorder:
         except Exception as e:
             print(f"[录屏] 启动视频录制线程失败: {e}")
             import traceback
+
             print(f"[录屏] 异常堆栈: {traceback.format_exc()}")
 
         # 启动音频录制线程
@@ -1255,27 +1666,27 @@ class ScreenRecorder:
         self.root.iconify()
 
         self.show_notification("开始录屏", is_weak=True)
-    
+
     def pause_recording(self):
         if self.paused:
             # 从暂停状态恢复
             self.paused = False
             self.pause_btn.config(text="暂停录屏")
             # 更新缩略功能区的按钮文本
-            if hasattr(self, 'mini_pause_btn') and self.mini_pause_btn:
+            if hasattr(self, "mini_pause_btn") and self.mini_pause_btn:
                 self.mini_pause_btn.config(text="暂停录屏")
             # 更新状态标签
-            if hasattr(self, 'mini_status_label') and self.mini_status_label:
-                self.mini_status_label.config(text="录屏中...", foreground='green')
+            if hasattr(self, "mini_status_label") and self.mini_status_label:
+                self.mini_status_label.config(text="录屏中...", foreground="green")
             # 启用标记进度按钮
             self.mark_btn.config(state=tk.NORMAL)
-            if hasattr(self, 'mini_mark_btn') and self.mini_mark_btn:
+            if hasattr(self, "mini_mark_btn") and self.mini_mark_btn:
                 self.mini_mark_btn.config(state=tk.NORMAL)
             # 调整 recording_start_time，跳过暂停的时间
-            if hasattr(self, 'pause_start_time'):
+            if hasattr(self, "pause_start_time"):
                 pause_duration = time.time() - self.pause_start_time
                 self.recording_start_time += pause_duration
-                delattr(self, 'pause_start_time')
+                delattr(self, "pause_start_time")
             self.show_notification("继续录屏", is_weak=True)
         else:
             # 进入暂停状态
@@ -1284,23 +1695,23 @@ class ScreenRecorder:
             self.pause_start_time = time.time()
             self.pause_btn.config(text="继续录屏")
             # 更新缩略功能区的按钮文本
-            if hasattr(self, 'mini_pause_btn') and self.mini_pause_btn:
+            if hasattr(self, "mini_pause_btn") and self.mini_pause_btn:
                 self.mini_pause_btn.config(text="继续录屏")
             # 更新状态标签
-            if hasattr(self, 'mini_status_label') and self.mini_status_label:
-                self.mini_status_label.config(text="已暂停", foreground='orange')
+            if hasattr(self, "mini_status_label") and self.mini_status_label:
+                self.mini_status_label.config(text="已暂停", foreground="orange")
             # 禁用标记进度按钮
             self.mark_btn.config(state=tk.DISABLED)
-            if hasattr(self, 'mini_mark_btn') and self.mini_mark_btn:
+            if hasattr(self, "mini_mark_btn") and self.mini_mark_btn:
                 self.mini_mark_btn.config(state=tk.DISABLED)
             self.show_notification("暂停录屏", is_weak=True)
-    
+
     def stop_recording(self):
         self.recording = False
         # 如果处于暂停状态，先调整 recording_start_time
-        if self.paused and hasattr(self, 'pause_start_time'):
+        if self.paused and hasattr(self, "pause_start_time"):
             self.recording_start_time += time.time() - self.pause_start_time
-            delattr(self, 'pause_start_time')
+            delattr(self, "pause_start_time")
         # 未录制时：显示开始按钮，隐藏暂停、结束、标记按钮
         self.pause_btn.grid_remove()
         self.stop_btn.grid_remove()
@@ -1312,17 +1723,19 @@ class ScreenRecorder:
             self.update_thread.join(timeout=1)
 
         # 等待录屏线程结束（现在重编码已移到后台，不需要等待30秒）
-        if hasattr(self, 'record_thread') and self.record_thread:
+        if hasattr(self, "record_thread") and self.record_thread:
             self.record_thread.join(timeout=2)
 
         # 等待音频线程结束
-        if hasattr(self, 'audio_thread') and self.audio_thread:
+        if hasattr(self, "audio_thread") and self.audio_thread:
             self.audio_thread.join(timeout=2)
-        
+
         # 记录录制结束时间（用于音频时长计算）
-        if hasattr(self, '_master_clock_start'):
+        if hasattr(self, "_master_clock_start"):
             self._master_clock_end = time.perf_counter()
-            print(f"[录制] 主时钟时长: {self._master_clock_end - self._master_clock_start:.2f}秒")
+            print(
+                f"[录制] 主时钟时长: {self._master_clock_end - self._master_clock_start:.2f}秒"
+            )
 
         # 关闭缩略功能区
         self.close_mini_control()
@@ -1330,73 +1743,218 @@ class ScreenRecorder:
         # 恢复主窗口
         self.root.deiconify()
         self.root.update()  # 立即更新窗口状态
-        
+
         # 在后台线程中异步处理：先重编码视频，再合并音视频（不阻塞UI！）
         self.merging_in_progress = True
         self.merge_completed = False
-        
+
         # 显示置顶提示
-        if hasattr(self, 'merging_window') and self.merging_window:
+        if hasattr(self, "merging_window") and self.merging_window:
             try:
                 self.merging_window.destroy()
             except:
                 pass
-        
+
         # 获取canvas的屏幕位置
         self.root.update_idletasks()
         canvas_x = self.canvas.winfo_rootx()
         canvas_y = self.canvas.winfo_rooty()
         canvas_w = self.canvas.winfo_width()
         canvas_h = self.canvas.winfo_height()
-        
+
         # 计算提示窗口位置（canvas正中间）
         window_width = 200
         window_height = 60
         pos_x = canvas_x + (canvas_w - window_width) // 2
         pos_y = canvas_y + (canvas_h - window_height) // 2
-        
+
+        self.merge_progress = 0
         self.merging_window = tk.Toplevel(self.root)
         self.merging_window.title("提示")
         self.merging_window.geometry(f"{window_width}x{window_height}+{pos_x}+{pos_y}")
         self.merging_window.resizable(False, False)
-        self.merging_window.attributes('-topmost', True)
-        self.merging_window.configure(bg='#1a1a2e')
+        self.merging_window.attributes("-topmost", True)
+        self.merging_window.configure(bg="#1a1a2e")
         self.merging_window.overrideredirect(True)
-        
-        label = tk.Label(
+
+        self.merging_label = tk.Label(
             self.merging_window,
-            text="视频生成中...",
-            bg='#1a1a2e',
-            fg='white',
-            font=('Arial', 14, 'bold')
+            text="视频生成中 0%",
+            bg="#1a1a2e",
+            fg="white",
+            font=("Arial", 14, "bold"),
         )
-        label.pack(expand=True)
-        
+        self.merging_label.pack(expand=True)
+
+        self._merge_start_time = time.time()
+
+        def update_progress():
+            if self.merging_in_progress and hasattr(self, 'merging_window') and self.merging_window:
+                try:
+                    elapsed = time.time() - self._merge_start_time
+                    print(f"[进度调试] 已过{elapsed:.0f}秒, merge_progress={self.merge_progress}%, merging_in_progress={self.merging_in_progress}")
+                    self.merging_label.config(text=f"视频生成中 {self.merge_progress}%")
+                    self.merging_window.after(10000, update_progress)
+                except Exception as e:
+                    print(f"[进度调试] timer异常: {e}")
+        self.merging_window.after(10000, update_progress)
+
         # 先保存状态，再启动线程
         self._save_merge_state(True)
-        
+
         def async_process():
-            print("[后台处理] 开始异步处理视频...")
-            
-            # 步骤1：视频重编码（如果有未处理的帧）
-            if hasattr(self, '_recorded_frames') and self._recorded_frames:
-                print("[后台处理] 开始视频重编码...")
-                self._encode_video_from_frames(self._recorded_frames, self._pending_timestamps)
-                # 清理临时数据
-                delattr(self, '_recorded_frames')
-                delattr(self, '_pending_timestamps')
-                print("[后台处理] 视频重编码完成")
-            
+            import time as _time
+            _proc_start = _time.time()
+            print(f"[后台处理] 开始异步处理视频... (时间戳: {_proc_start:.3f})")
+
+            # 步骤1：重编码临时录制文件为可 seek 的视频
+            if hasattr(self, "_temp_recording_file") and self._temp_recording_file:
+                if os.path.exists(self._temp_recording_file):
+                    _t1 = _time.time()
+                    print(f"[后台处理] 使用录制时实时写入的文件: {self._temp_recording_file} (已过{_t1-_proc_start:.1f}秒)")
+
+                    # 从时间戳计算真实录制时长和实际帧数
+                    actual_frame_count = 0
+                    if (
+                        hasattr(self, "_pending_timestamps")
+                        and self._pending_timestamps
+                    ):
+                        first_pts = self._pending_timestamps[0][1]
+                        last_pts = self._pending_timestamps[-1][1]
+                        self._real_recorded_duration = last_pts - first_pts
+                        actual_frame_count = len(self._pending_timestamps)
+                        print(
+                            f"[后台处理] 真实录制时长: {self._real_recorded_duration:.2f}秒, 实际帧数: {actual_frame_count} (已过{_time.time()-_proc_start:.1f}秒)"
+                        )
+                    else:
+                        print(f"[后台处理] 警告: 无_pending_timestamps, 无法计算帧数! (已过{_time.time()-_proc_start:.1f}秒)")
+                    # 清理临时数据
+                    if hasattr(self, "_pending_timestamps"):
+                        delattr(self, "_pending_timestamps")
+
+                    _t2 = _time.time()
+                    print(f"[后台处理] 开始FFmpeg重编码... (已过{_t2-_proc_start:.1f}秒)")
+                    try:
+                        import subprocess
+                        import imageio_ffmpeg
+
+                        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+                        print(f"[后台处理] FFmpeg路径: {ffmpeg_exe} (已过{_time.time()-_proc_start:.1f}秒)")
+
+                        # 先重命名临时文件为video_file_no_audio
+                        if os.path.exists(self.video_file_no_audio):
+                            os.remove(self.video_file_no_audio)
+                        os.rename(self._temp_recording_file, self.video_file_no_audio)
+                        print(f"[后台处理] 已重命名文件 (已过{_time.time()-_proc_start:.1f}秒)")
+
+                        # 通过 setpts 拉伸帧时间戳，使输出时长与真实录制时长一致
+                        pts_scale = 1.0
+                        output_fps = 30.0
+                        if self._real_recorded_duration > 0 and actual_frame_count > 0:
+                            pts_scale = (
+                                self._real_recorded_duration * 30.0
+                            ) / actual_frame_count
+                            output_fps = (
+                                actual_frame_count / self._real_recorded_duration
+                            )
+                        print(
+                            f"[后台处理] setpts缩放因子: {pts_scale:.4f}, 输出帧率≈{output_fps:.2f}fps (已过{_time.time()-_proc_start:.1f}秒)"
+                        )
+
+                        reencoded_file = self.video_file_no_audio + ".reencoded.mp4"
+                        cmd = [
+                            ffmpeg_exe,
+                            "-y",
+                            "-i",
+                            self.video_file_no_audio,
+                            "-c:v",
+                            "libx264",
+                            "-crf",
+                            "23",
+                            "-preset",
+                            "ultrafast",
+                            "-filter:v",
+                            f"setpts={pts_scale:.4f}*PTS",
+                            "-g",
+                            f"{max(1, int(output_fps * 1.5))}",
+                            "-pix_fmt",
+                            "yuv420p",
+                            reencoded_file,
+                        ]
+                        print(f"[后台处理] FFmpeg命令: {' '.join(cmd)} (已过{_time.time()-_proc_start:.1f}秒)")
+                        _ffmpeg_start = _time.time()
+                        process = subprocess.Popen(
+                            cmd, stderr=subprocess.PIPE, text=True, bufsize=1
+                        )
+                        _line_count = 0
+                        _stderr_lines = []
+                        for line in process.stderr:
+                            _line_count += 1
+                            if _line_count <= 5:
+                                print(f"[后台处理] FFmpeg stderr: {line.rstrip()}")
+                            if _line_count % 50 == 0:
+                                print(f"[后台处理] FFmpeg已输出{_line_count}行stderr, merge_progress={self.merge_progress} (已过{_time.time()-_proc_start:.1f}秒)")
+                            if line.startswith('frame='):
+                                try:
+                                    frame_str = line.split('=')[1].strip().split()[0]
+                                    current_frame = int(frame_str)
+                                    if actual_frame_count > 0:
+                                        pct = int(current_frame / actual_frame_count * 60)
+                                        if pct != self.merge_progress:
+                                            print(f"[后台处理] 进度更新: frame={current_frame}/{actual_frame_count}, progress={pct}% (已过{_time.time()-_proc_start:.1f}秒)")
+                                        self.merge_progress = min(pct, 59)
+                                except Exception as e:
+                                    print(f"[后台处理] 解析frame行异常: {e}, line={line.rstrip()}")
+                            _stderr_lines.append(line)
+                        process.wait()
+                        _ffmpeg_elapsed = _time.time() - _ffmpeg_start
+                        print(f"[后台处理] FFmpeg进程结束, 耗时{_ffmpeg_elapsed:.1f}秒, returncode={process.returncode}")
+                        result = subprocess.CompletedProcess(cmd, process.returncode, '', ''.join(_stderr_lines))
+                        self.merge_progress = 60
+                        print(f"[后台处理] 步骤1完成, merge_progress=60 (已过{_time.time()-_proc_start:.1f}秒)")
+
+                        if result.returncode == 0 and os.path.exists(reencoded_file):
+                            os.remove(self.video_file_no_audio)
+                            os.rename(reencoded_file, self.video_file_no_audio)
+                            print(
+                                f"[后台处理] FFmpeg重编码完成: {self.video_file_no_audio} (已过{_time.time()-_proc_start:.1f}秒)"
+                            )
+                        else:
+                            print(f"[后台处理] FFmpeg重编码失败, returncode={result.returncode}, stderr前500字: {result.stderr[:500]}")
+                            if os.path.exists(self.video_file_no_audio):
+                                pass
+                            else:
+                                try:
+                                    os.rename(
+                                        self._temp_recording_file,
+                                        self.video_file_no_audio,
+                                    )
+                                except:
+                                    pass
+                            print(
+                                f"[后台处理] 保留原始文件: {self.video_file_no_audio}"
+                            )
+                    except Exception as e:
+                        print(f"[后台处理] FFmpeg重编码异常: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        print("[后台处理] 保留原始文件")
+
+                    self._temp_recording_file = None
+                    print(f"[后台处理] 视频文件准备完成 (已过{_time.time()-_proc_start:.1f}秒)")
+
             # 步骤2：音视频合并
-            print("[后台处理] 开始音视频合并...")
+            _t3 = _time.time()
+            print(f"[后台处理] 开始音视频合并... (已过{_t3-_proc_start:.1f}秒)")
             self.merge_audio_video()
-            print("[后台处理] 音视频合并完成")
-            
+            _t4 = _time.time()
+            print(f"[后台处理] 音视频合并完成, 耗时{_t4-_t3:.1f}秒 (总已过{_t4-_proc_start:.1f}秒)")
+
             self.merging_in_progress = False
             self.merge_completed = True
-            self._save_merge_state(False)  # 完成后清除状态
-            print("[后台处理] 所有处理完成！")
-            
+            self._save_merge_state(False)
+            print(f"[后台处理] 所有处理完成！总耗时{_time.time()-_proc_start:.1f}秒")
+
             # 处理完成后，通知主线程更新UI
             def update_ui_after_process():
                 if self.video_file and os.path.exists(self.video_file):
@@ -1408,16 +1966,16 @@ class ScreenRecorder:
                     self.show_notification("录屏完成", is_weak=True)
                     self.save_recording_path()
                     self.show_first_frame()
-            
+
             # 在主线程中更新UI
             self.root.after(0, update_ui_after_process)
-        
+
         threading.Thread(target=async_process, daemon=True).start()
-        
+
         # 禁用播放按钮（合并完成前不能播放）
         self.play_btn.config(state=tk.DISABLED)
         self.show_notification("正在后台处理视频...", is_weak=True)
-    
+
     def _save_merge_state(self, in_progress):
         """保存合并状态到文件，以便工具重启后可以继续"""
         try:
@@ -1428,9 +1986,9 @@ class ScreenRecorder:
                     "video_file_no_audio": self.video_file_no_audio,
                     "audio_file": self.audio_file,
                     "video_file": self.video_file,
-                    "session_dir": self.current_session_dir
+                    "session_dir": self.current_session_dir,
                 }
-                with open(state_file, 'w', encoding='utf-8') as f:
+                with open(state_file, "w", encoding="utf-8") as f:
                     json.dump(state, f, ensure_ascii=False, indent=2)
                 print(f"[状态] 已保存合并状态到: {state_file}")
             else:
@@ -1440,19 +1998,19 @@ class ScreenRecorder:
                     print(f"[状态] 已清除合并状态")
         except Exception as e:
             print(f"[状态] 保存/清除状态失败: {e}")
-    
+
     def _check_and_resume_merge(self):
         """检查并恢复未完成的合并任务（扫描所有录制文件夹）"""
         base_dir = os.path.dirname(os.path.abspath(__file__))
         recordings_base = os.path.join(base_dir, self.recordings_dir)
         found_states = []
-        
+
         # 检查当前会话
-        if hasattr(self, 'current_session_dir') and self.current_session_dir:
+        if hasattr(self, "current_session_dir") and self.current_session_dir:
             state_file = os.path.join(self.current_session_dir, "merge_state.json")
             if os.path.exists(state_file):
                 try:
-                    with open(state_file, 'r', encoding='utf-8') as f:
+                    with open(state_file, "r", encoding="utf-8") as f:
                         state = json.load(f)
                     # 验证状态文件有效性
                     if self._validate_merge_state(state, state_file):
@@ -1461,7 +2019,7 @@ class ScreenRecorder:
                     print(f"[状态] 加载状态失败: {e}")
                     if os.path.exists(state_file):
                         os.remove(state_file)
-        
+
         # 扫描所有录制文件夹
         if os.path.exists(recordings_base):
             try:
@@ -1471,7 +2029,7 @@ class ScreenRecorder:
                         state_file = os.path.join(folder, "merge_state.json")
                         if os.path.exists(state_file):
                             try:
-                                with open(state_file, 'r', encoding='utf-8') as f:
+                                with open(state_file, "r", encoding="utf-8") as f:
                                     state = json.load(f)
                                 # 验证状态文件有效性
                                 if self._validate_merge_state(state, state_file):
@@ -1482,44 +2040,51 @@ class ScreenRecorder:
                                     os.remove(state_file)
             except Exception as e:
                 print(f"[状态] 扫描录制文件夹失败: {e}")
-        
+
         if found_states:
             # 返回第一个有效的状态（带状态文件路径）
             state, state_file = found_states[0]
             print(f"[状态] 检测到未完成的合并任务: {state}")
             return state
-        
+
         return None
-    
+
     def _validate_merge_state(self, state, state_file):
         """验证合并状态是否有效，无效则删除状态文件"""
         # 检查必需字段
-        required_fields = ["video_file", "video_file_no_audio", "audio_file", "session_dir"]
+        required_fields = [
+            "video_file",
+            "video_file_no_audio",
+            "audio_file",
+            "session_dir",
+        ]
         for field in required_fields:
             if field not in state:
                 print(f"[状态] 状态文件缺少字段 {field}，删除无效状态")
                 os.remove(state_file)
                 return False
-        
+
         # 检查文件是否存在
         if not os.path.exists(state["video_file_no_audio"]):
-            print(f"[状态] 无音频视频文件不存在: {state['video_file_no_audio']}，删除无效状态")
+            print(
+                f"[状态] 无音频视频文件不存在: {state['video_file_no_audio']}，删除无效状态"
+            )
             os.remove(state_file)
             return False
-        
+
         if not os.path.exists(state["audio_file"]):
             print(f"[状态] 音频文件不存在: {state['audio_file']}，删除无效状态")
             os.remove(state_file)
             return False
-        
+
         # 如果最终视频已经存在，说明合并已完成，清理状态文件
         if os.path.exists(state["video_file"]):
             print(f"[状态] 最终视频已存在，删除旧状态")
             os.remove(state_file)
             return False
-        
+
         return True
-    
+
     def _acquire_merge_lock(self, session_dir):
         """尝试获取合并锁，防止多个实例同时操作"""
         lock_file = os.path.join(session_dir, "merge_lock.lock")
@@ -1537,16 +2102,16 @@ class ScreenRecorder:
                         return False
                 except:
                     os.remove(lock_file)
-            
+
             # 创建锁文件
-            with open(lock_file, 'w') as f:
+            with open(lock_file, "w") as f:
                 f.write(str(os.getpid()))
             print(f"[锁] 获取合并锁成功")
             return True
         except Exception as e:
             print(f"[锁] 获取锁失败: {e}")
             return False
-    
+
     def _release_merge_lock(self, session_dir):
         """释放合并锁"""
         lock_file = os.path.join(session_dir, "merge_lock.lock")
@@ -1556,12 +2121,12 @@ class ScreenRecorder:
                 print(f"[锁] 释放合并锁成功")
         except Exception as e:
             print(f"[锁] 释放锁失败: {e}")
-    
+
     def _resume_merge_from_state(self, state):
         """从保存的状态恢复合并任务"""
         print(f"[恢复] ===== 开始恢复合并任务 ===== ")
         print(f"[恢复] 状态信息: {state}")
-        
+
         try:
             # 步骤0: 获取合并锁
             print(f"[恢复] 步骤0: 获取合并锁")
@@ -1569,7 +2134,7 @@ class ScreenRecorder:
             if not self._acquire_merge_lock(session_dir):
                 print(f"[恢复] 失败: 无法获取合并锁，可能有其他实例在处理")
                 return False
-            
+
             try:
                 # 步骤1: 设置文件路径
                 print(f"[恢复] 步骤1: 设置文件路径")
@@ -1577,71 +2142,73 @@ class ScreenRecorder:
                 self.audio_file = state["audio_file"]
                 self.video_file = state["video_file"]
                 self.current_session_dir = session_dir
-                
+
                 # 步骤2: 检查文件存在性（额外的安全检查）
                 print(f"[恢复] 步骤2: 检查文件存在性")
                 if not os.path.exists(self.video_file_no_audio):
                     print(f"[恢复] 失败: 无音频视频文件不存在")
                     self._save_merge_state(False)
                     return False
-                
+
                 if not os.path.exists(self.audio_file):
                     print(f"[恢复] 失败: 音频文件不存在")
                     self._save_merge_state(False)
                     return False
-                
+
                 # 步骤3: 执行合并
                 print(f"[恢复] 步骤3: 执行音视频合并")
                 self.merging_in_progress = True
                 self.merge_audio_video()
                 self.merging_in_progress = False
-                
+
                 # 步骤4: 验证合并结果
                 print(f"[恢复] 步骤4: 验证合并结果")
                 if os.path.exists(self.video_file):
                     print(f"[恢复] 成功: 合并完成，视频文件: {self.video_file}")
                 else:
                     print(f"[恢复] 警告: 合并完成但视频文件不存在")
-                
+
                 # 步骤5: 清理状态
                 print(f"[恢复] 步骤5: 清理合并状态")
                 self._save_merge_state(False)
-                
+
                 print(f"[恢复] ===== 恢复合并任务完成 ===== ")
                 return True
-            
+
             finally:
                 # 确保释放锁
                 self._release_merge_lock(session_dir)
-            
+
         except Exception as e:
             print(f"[恢复] 错误: 恢复合并任务失败 - {e}")
             import traceback
+
             print(f"[恢复] 错误详情: {traceback.format_exc()}")
             try:
                 self._save_merge_state(False)
             except:
                 pass
             return False
-    
+
     def _on_resume_complete(self, success):
         """恢复合并任务完成的回调（仅用于内部调用）"""
         print(f"[回调] 恢复完成: {success}")
-    
+
     def open_video_location(self):
         """打开视频文件所在的目录并选中该文件"""
         if not self.video_file or not os.path.exists(self.video_file):
             print(f"[DEBUG] video_file不存在: {self.video_file}")
             return
-        
+
         try:
-            if os.name == 'nt':  # Windows
+            if os.name == "nt":  # Windows
                 import subprocess
+
                 video_file_normalized = os.path.normpath(self.video_file)
                 print(f"[DEBUG] video_file = {self.video_file}")
                 print(f"[DEBUG] normalized path = {video_file_normalized}")
                 print(f"[DEBUG] file exists: {os.path.exists(video_file_normalized)}")
-                
+
                 try:
                     cmd = f'explorer.exe /select,"{video_file_normalized}"'
                     print(f"[DEBUG] executing: {cmd}")
@@ -1651,116 +2218,90 @@ class ScreenRecorder:
                     file_dir = os.path.dirname(video_file_normalized)
                     if os.path.exists(file_dir):
                         os.startfile(file_dir)
-            elif os.name == 'posix':  # macOS/Linux
-                if 'darwin' in sys.platform:  # macOS
+            elif os.name == "posix":  # macOS/Linux
+                if "darwin" in sys.platform:  # macOS
                     import subprocess
-                    subprocess.run(['open', '-R', self.video_file])
+
+                    subprocess.run(["open", "-R", self.video_file])
                 else:  # Linux
                     import subprocess
+
                     try:
-                        subprocess.run(['nautilus', '--select', self.video_file])
+                        subprocess.run(["nautilus", "--select", self.video_file])
                     except FileNotFoundError:
                         try:
-                            subprocess.run(['dolphin', '--select', self.video_file])
+                            subprocess.run(["dolphin", "--select", self.video_file])
                         except FileNotFoundError:
-                            subprocess.run(['thunar', '--select', self.video_file])
+                            subprocess.run(["thunar", "--select", self.video_file])
         except Exception as e:
             print(f"[错误] 打开文件位置失败: {e}")
             self.show_notification("打开文件位置失败", is_weak=True)
-    
+
     def open_clip_location(self):
-        """打开选中片段所在的目录并选中该文件"""
+        """打开选中片段所在的目录"""
         if not self.current_session_dir:
             print(f"[DEBUG] current_session_dir为空")
             return
-        
+
         try:
             clip_dir = os.path.join(self.current_session_dir, self.clip_dir)
             if not os.path.exists(clip_dir):
                 os.makedirs(clip_dir)
-            
+
             selected_index = self.clip_listbox.curselection()
             if selected_index:
                 clip_index = selected_index[0]
                 if clip_index < len(self.clips):
                     clip = self.clips[clip_index]
-                    if 'folder_name' in clip:
-                        clip_folder = os.path.join(clip_dir, clip['folder_name'])
-                        clip_file = os.path.join(clip_folder, "clip.avi")
+                    if "folder_name" in clip:
+                        clip_folder = os.path.join(clip_dir, clip["folder_name"])
+                        if os.path.exists(clip_folder):
+                            os.startfile(clip_folder)
+                            return
                     else:
-                        clip_id = clip.get('id', clip_index + 1)
-                        if 'name' in clip and clip['name']:
-                            clip_file = os.path.join(clip_dir, f"{clip['name']}.avi")
+                        clip_id = clip.get("id", clip_index + 1)
+                        if "name" in clip and clip["name"]:
+                            clip_file = os.path.join(clip_dir, f"{clip['name']}.mp4")
                         else:
                             video_filename = ""
                             if self.video_file:
                                 basename = os.path.basename(self.video_file)
                                 video_filename = os.path.splitext(basename)[0] + "_"
-                            clip_file = os.path.join(clip_dir, f"{video_filename}片段 {clip_id}.avi")
-                    
-                    print(f"[DEBUG] clip_file = {clip_file}")
-                    print(f"[DEBUG] clip_file exists: {os.path.exists(clip_file)}")
-                    
-                    if os.path.exists(clip_file):
-                        if os.name == 'nt':  # Windows
-                            import subprocess
-                            clip_file_normalized = os.path.normpath(clip_file)
-                            
-                            try:
-                                cmd = f'explorer.exe /select,"{clip_file_normalized}"'
-                                print(f"[DEBUG] executing: {cmd}")
-                                subprocess.run(cmd, shell=True, check=True)
-                            except Exception as e:
-                                print(f"[DEBUG] /select命令失败: {e}，尝试回退到只打开目录")
-                                file_dir = os.path.dirname(clip_file_normalized)
-                                if os.path.exists(file_dir):
-                                    os.startfile(file_dir)
-                        elif os.name == 'posix':
-                            if 'darwin' in sys.platform:
-                                import subprocess
-                                subprocess.run(['open', '-R', clip_file])
-                            else:
-                                import subprocess
-                                try:
-                                    subprocess.run(['nautilus', '--select', clip_file])
-                                except FileNotFoundError:
-                                    try:
-                                        subprocess.run(['dolphin', '--select', clip_file])
-                                    except FileNotFoundError:
-                                        subprocess.run(['thunar', '--select', clip_file])
-                        return
-            
-            if os.name == 'nt':  # Windows
-                os.startfile(clip_dir)
-            else:
-                import subprocess
-                subprocess.call(['open', clip_dir])
+                            clip_file = os.path.join(
+                                clip_dir, f"{video_filename}片段 {clip_id}.mp4"
+                            )
+                        clip_folder = os.path.dirname(clip_file)
+                        if os.path.exists(clip_folder):
+                            os.startfile(clip_folder)
+                            return
+
+            os.startfile(clip_dir)
         except Exception as e:
             print(f"[错误] 打开文件位置失败: {e}")
             self.show_notification("打开文件位置失败", is_weak=True)
-    
+
     def rename_selected_clip(self):
         """重命名选中的片段"""
         selected_index = self.clip_listbox.curselection()
         if not selected_index:
             self.show_notification("请先选择要重命名的片段", is_weak=True)
             return
-        
+
         clip_index = selected_index[0]
         if clip_index >= len(self.clips):
             return
-        
+
         clip = self.clips[clip_index]
-        clip_id = clip.get('id', clip_index + 1)
-        
+        clip_id = clip.get("id", clip_index + 1)
+
         # 创建重命名窗口
         rename_window = tk.Toplevel(self.root)
         rename_window.title("重命名片段")
         rename_window.geometry("400x195")
         rename_window.configure(bg=self.card_bg)
         rename_window.resizable(False, False)
-        rename_window.attributes('-topmost', True)
-        
+        rename_window.attributes("-topmost", True)
+
         # 居中显示
         rename_window.update_idletasks()
         screen_width = rename_window.winfo_screenwidth()
@@ -1768,10 +2309,10 @@ class ScreenRecorder:
         x = (screen_width - 400) // 2
         y = (screen_height - 195) // 2
         rename_window.geometry(f"400x195+{x}+{y}")
-        
+
         # 当前名称
-        if 'name' in clip and clip['name']:
-            current_name = clip['name']
+        if "name" in clip and clip["name"]:
+            current_name = clip["name"]
         else:
             # 获取当前视频的文件名（不含路径和后缀）
             video_filename = ""
@@ -1780,41 +2321,52 @@ class ScreenRecorder:
                 video_filename = os.path.splitext(basename)[0] + "_"
             # 使用与系统文件名一致的格式
             current_name = f"{video_filename}片段 {clip_id}"
-        
+
         # 标签
-        tk.Label(rename_window, text="输入新的片段名称：", 
-                font=('Arial', 10), bg=self.card_bg, fg=self.text_color).pack(pady=(15, 5))
-        
+        tk.Label(
+            rename_window,
+            text="输入新的片段名称：",
+            font=("Arial", 10),
+            bg=self.card_bg,
+            fg=self.text_color,
+        ).pack(pady=(15, 5))
+
         # 输入框框架
         input_frame = tk.Frame(rename_window, bg=self.card_bg)
         input_frame.pack(pady=5)
-        
+
         # 名称输入框
         name_var = tk.StringVar(value=current_name)
-        name_entry = tk.Entry(input_frame, textvariable=name_var, 
-                             font=('Arial', 10), width=30)
+        name_entry = tk.Entry(
+            input_frame, textvariable=name_var, font=("Arial", 10), width=30
+        )
         name_entry.pack(side=tk.LEFT, padx=(0, 5))
         name_entry.select_range(0, tk.END)
         name_entry.focus()
-        
+
         # 后缀标签
-        tk.Label(input_frame, text=".avi", 
-                font=('Arial', 10), bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
-        
+        tk.Label(
+            input_frame,
+            text=".mp4",
+            font=("Arial", 10),
+            bg=self.card_bg,
+            fg=self.text_color,
+        ).pack(side=tk.LEFT)
+
         # 按钮框架
         button_frame = tk.Frame(rename_window, bg=self.card_bg)
         button_frame.pack(pady=15)
-        
+
         # 确定按钮
         def confirm_rename():
             new_name = name_var.get().strip()
             if not new_name:
                 messagebox.showerror("错误", "名称不能为空")
                 return
-            
+
             # 检查新名称是否已存在
             clip_dir = os.path.join(self.current_session_dir, self.clip_dir)
-            
+
             # 检查是否与其他文件重名（包括文件夹）
             duplicate_found = False
             if os.path.exists(clip_dir):
@@ -1822,121 +2374,144 @@ class ScreenRecorder:
                     if item == new_name:
                         duplicate_found = True
                         break
-            
+
             if duplicate_found:
-                self.show_notification("已存在重名文件或文件夹", is_weak=True, parent=rename_window)
+                self.show_notification(
+                    "已存在重名文件或文件夹", is_weak=True, parent=rename_window
+                )
                 return
-            
+
             try:
                 # 获取片段在self.clips中的实际索引
                 actual_clip_index = None
                 for idx, c in enumerate(self.clips):
-                    if c.get('id') == clip_id:
+                    if c.get("id") == clip_id:
                         actual_clip_index = idx
                         break
-                
-                print(f"[DEBUG] 重命名片段: clip_id={clip_id}, actual_index={actual_clip_index}")
-                print(f"[DEBUG] 当前片段信息: {self.clips[actual_clip_index] if actual_clip_index is not None else 'Not found'}")
-                
+
+                print(
+                    f"[DEBUG] 重命名片段: clip_id={clip_id}, actual_index={actual_clip_index}"
+                )
+                print(
+                    f"[DEBUG] 当前片段信息: {self.clips[actual_clip_index] if actual_clip_index is not None else 'Not found'}"
+                )
+
                 # 检查是否有folder_name（新结构）或者尝试构建folder_name
                 current_clip = self.clips[actual_clip_index]
-                has_folder_name = 'folder_name' in current_clip and current_clip['folder_name']
-                
+                has_folder_name = (
+                    "folder_name" in current_clip and current_clip["folder_name"]
+                )
+
                 if has_folder_name:
                     # 新结构：重命名文件夹
-                    old_folder = os.path.join(clip_dir, current_clip['folder_name'])
+                    old_folder = os.path.join(clip_dir, current_clip["folder_name"])
                     new_folder = os.path.join(clip_dir, new_name)
-                    
+
                     if os.path.exists(old_folder):
                         os.rename(old_folder, new_folder)
                         print(f"片段文件夹已重命名: {old_folder} -> {new_folder}")
                     else:
                         print(f"警告：原文件夹不存在: {old_folder}")
-                    
+
                     # 更新片段信息（更新到self.clips）
-                    self.clips[actual_clip_index]['folder_name'] = new_name
-                    self.clips[actual_clip_index]['name'] = new_name
+                    self.clips[actual_clip_index]["folder_name"] = new_name
+                    self.clips[actual_clip_index]["name"] = new_name
                     print(f"[DEBUG] 更新self.clips[{actual_clip_index}]完成")
-                    
+
                     # 更新签名文件
-                    self.create_clip_signature(new_folder, self.clips[actual_clip_index])
+                    self.create_clip_signature(
+                        new_folder, self.clips[actual_clip_index]
+                    )
                 else:
                     # 旧结构或混合结构：需要处理文件夹
                     video_filename = ""
                     if self.video_file:
                         basename = os.path.basename(self.video_file)
                         video_filename = os.path.splitext(basename)[0] + "_"
-                    
+
                     # 尝试构建文件夹名（与finish_clip中一致的格式）
                     old_folder_name = f"{video_filename}片段_{clip_id}"
                     old_folder = os.path.join(clip_dir, old_folder_name)
                     new_folder = os.path.join(clip_dir, new_name)
-                    
+
                     print(f"[DEBUG] 尝试旧结构重命名: {old_folder} -> {new_folder}")
-                    
+
                     if os.path.exists(old_folder):
                         os.rename(old_folder, new_folder)
-                        print(f"片段文件夹已重命名（旧结构）: {old_folder} -> {new_folder}")
+                        print(
+                            f"片段文件夹已重命名（旧结构）: {old_folder} -> {new_folder}"
+                        )
                         # 更新片段信息
-                        self.clips[actual_clip_index]['folder_name'] = new_name
-                        self.clips[actual_clip_index]['name'] = new_name
+                        self.clips[actual_clip_index]["folder_name"] = new_name
+                        self.clips[actual_clip_index]["name"] = new_name
                         # 更新签名文件
-                        self.create_clip_signature(new_folder, self.clips[actual_clip_index])
+                        self.create_clip_signature(
+                            new_folder, self.clips[actual_clip_index]
+                        )
                     else:
                         # 旧结构文件方式（无文件夹）
-                        new_file = os.path.join(clip_dir, f"{new_name}.avi")
-                        old_file = os.path.join(clip_dir, f"{video_filename}片段 {clip_id}.avi")
-                        
+                        new_file = os.path.join(clip_dir, f"{new_name}.mp4")
+                        old_file = os.path.join(
+                            clip_dir, f"{video_filename}片段 {clip_id}.mp4"
+                        )
+
                         if os.path.exists(old_file):
                             os.rename(old_file, new_file)
-                            print(f"片段文件已重命名（旧结构）: {old_file} -> {new_file}")
-                        
+                            print(
+                                f"片段文件已重命名（旧结构）: {old_file} -> {new_file}"
+                            )
+
                         # 更新片段信息
-                        self.clips[actual_clip_index]['name'] = new_name
-                
+                        self.clips[actual_clip_index]["name"] = new_name
+
                 # 更新视频片段字典
                 if self.video_file in self.video_clips:
                     for c in self.video_clips[self.video_file]:
-                        if c['id'] == clip_id:
-                            c['name'] = new_name
-                            if 'folder_name' in self.clips[actual_clip_index]:
-                                c['folder_name'] = new_name
+                        if c["id"] == clip_id:
+                            c["name"] = new_name
+                            if "folder_name" in self.clips[actual_clip_index]:
+                                c["folder_name"] = new_name
                             print(f"[DEBUG] 更新video_clips完成: {c}")
                             break
-                
+
                 # 更新片段列表
                 self.update_clips()
-                
+
                 # 关闭窗口
                 rename_window.destroy()
-                
+
                 self.show_notification("片段重命名成功", is_weak=True)
             except Exception as e:
                 print(f"重命名失败: {e}")
                 import traceback
+
                 traceback.print_exc()
                 messagebox.showerror("错误", f"重命名失败：{str(e)}")
-        
+
         # 取消按钮
         def cancel_rename():
             rename_window.destroy()
-        
-        ttk.Button(button_frame, text="确定", command=confirm_rename, style='Accent.TButton').pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="取消", command=cancel_rename, style='Custom.TButton').pack(side=tk.LEFT, padx=5)
-    
+
+        ttk.Button(
+            button_frame, text="确定", command=confirm_rename, style="Accent.TButton"
+        ).pack(side=tk.LEFT, padx=5)
+        ttk.Button(
+            button_frame, text="取消", command=cancel_rename, style="Custom.TButton"
+        ).pack(side=tk.LEFT, padx=5)
+
     def rename_video_file(self):
         """修改视频文件名"""
         if not self.video_file or not os.path.exists(self.video_file):
             return
-        
+
         # 创建弹窗
         rename_window = tk.Toplevel(self.root)
         rename_window.title("修改文件名")
         rename_window.geometry("400x195")
         rename_window.configure(bg=self.card_bg)
         rename_window.resizable(False, False)
-        rename_window.attributes('-topmost', True)
-        
+        rename_window.attributes("-topmost", True)
+
         # 居中显示
         rename_window.update_idletasks()
         screen_width = rename_window.winfo_screenwidth()
@@ -1944,149 +2519,181 @@ class ScreenRecorder:
         x = (screen_width - 400) // 2
         y = (screen_height - 195) // 2
         rename_window.geometry(f"400x195+{x}+{y}")
-        
+
         # 当前文件名
         current_filename = os.path.basename(self.video_file)
         # 提取不带后缀的文件名
         name_without_ext = os.path.splitext(current_filename)[0]
-        
+
         # 标签
-        tk.Label(rename_window, text="输入新的文件名：", 
-                font=('Arial', 10), bg=self.card_bg, fg=self.text_color).pack(pady=(15, 5))
-        
+        tk.Label(
+            rename_window,
+            text="输入新的文件名：",
+            font=("Arial", 10),
+            bg=self.card_bg,
+            fg=self.text_color,
+        ).pack(pady=(15, 5))
+
         # 输入框框架
         input_frame = tk.Frame(rename_window, bg=self.card_bg)
         input_frame.pack(pady=5)
-        
+
         # 文件名输入框
         filename_var = tk.StringVar(value=name_without_ext)
-        filename_entry = tk.Entry(input_frame, textvariable=filename_var, 
-                                 font=('Arial', 10), width=30)
+        filename_entry = tk.Entry(
+            input_frame, textvariable=filename_var, font=("Arial", 10), width=30
+        )
         filename_entry.pack(side=tk.LEFT, padx=(0, 5))
         filename_entry.select_range(0, tk.END)
         filename_entry.focus()
-        
+
         # 后缀标签
-        tk.Label(input_frame, text=".avi", 
-                font=('Arial', 10), bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
-        
+        tk.Label(
+            input_frame,
+            text=".avi",
+            font=("Arial", 10),
+            bg=self.card_bg,
+            fg=self.text_color,
+        ).pack(side=tk.LEFT)
+
         # 按钮框架
         button_frame = tk.Frame(rename_window, bg=self.card_bg)
         button_frame.pack(pady=15)
-        
+
         # 确定按钮
         def confirm_rename():
             new_name = filename_var.get().strip()
             if not new_name:
                 messagebox.showerror("错误", "文件名不能为空")
                 return
-            
+
             # 新的文件路径
-            new_filename = new_name + ".avi"
-            
+            new_filename = new_name + ".mp4"
+
             # 检查新文件名是否已存在于recordings目录及子文件夹中
             duplicate_found = False
             for root, dirs, files in os.walk(self.recordings_dir):
                 if new_filename in files:
                     duplicate_found = True
                     break
-            
+
             if duplicate_found:
-                self.show_notification("已存在重名文件", is_weak=True, parent=rename_window)
+                self.show_notification(
+                    "已存在重名文件", is_weak=True, parent=rename_window
+                )
                 return
-            
-            new_video_file = os.path.join(os.path.dirname(self.video_file), new_filename)
-            
+
+            new_video_file = os.path.join(
+                os.path.dirname(self.video_file), new_filename
+            )
+
             try:
                 # 重命名文件
                 os.rename(self.video_file, new_video_file)
-                
+
                 # 更新当前视频文件路径
                 old_video_file = self.video_file
                 self.video_file = new_video_file
-                
+
                 # 更新video_markers和video_clips中的键
                 if old_video_file in self.video_markers:
-                    self.video_markers[new_video_file] = self.video_markers.pop(old_video_file)
+                    self.video_markers[new_video_file] = self.video_markers.pop(
+                        old_video_file
+                    )
                 if old_video_file in self.video_clips:
-                    self.video_clips[new_video_file] = self.video_clips.pop(old_video_file)
-                
+                    self.video_clips[new_video_file] = self.video_clips.pop(
+                        old_video_file
+                    )
+
                 # 更新文件名标签
                 self.video_filename_label.config(text=new_filename)
-                
+
                 # 更新片段列表显示（同步修改后的文件名）
                 self.update_clips()
-                
+
                 # 关闭弹窗
                 rename_window.destroy()
-                
+
                 self.show_notification("文件名修改成功", is_weak=True)
             except Exception as e:
                 messagebox.showerror("错误", f"重命名失败：{str(e)}")
-        
+
         # 取消按钮
         def cancel_rename():
             rename_window.destroy()
-        
-        ttk.Button(button_frame, text="确定", command=confirm_rename, style='Accent.TButton').pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="取消", command=cancel_rename, style='Custom.TButton').pack(side=tk.LEFT, padx=5)
-    
+
+        ttk.Button(
+            button_frame, text="确定", command=confirm_rename, style="Accent.TButton"
+        ).pack(side=tk.LEFT, padx=5)
+        ttk.Button(
+            button_frame, text="取消", command=cancel_rename, style="Custom.TButton"
+        ).pack(side=tk.LEFT, padx=5)
+
     def show_first_frame(self):
         """显示视频的第一帧画面"""
         if not self.video_file or not os.path.exists(self.video_file):
             return
-        
+
         # 检查是否正在合并中
         if self.merging_in_progress:
             self.play_btn.config(state=tk.DISABLED)
-            
+
             # 清除之前的提示
-            if hasattr(self, 'merging_window') and self.merging_window:
+            if hasattr(self, "merging_window") and self.merging_window:
                 try:
                     self.merging_window.destroy()
                 except:
                     pass
-            
+
             # 创建置顶提示窗口
             self.merging_window = tk.Toplevel(self.root)
             self.merging_window.title("提示")
             self.merging_window.geometry("200x60")
             self.merging_window.resizable(False, False)
-            self.merging_window.attributes('-topmost', True)  # 置顶
-            self.merging_window.configure(bg='#1a1a2e')
+            self.merging_window.attributes("-topmost", True)  # 置顶
+            self.merging_window.configure(bg="#1a1a2e")
             self.merging_window.overrideredirect(True)  # 无边框
-            
+
             # 居中显示在视频预览区域
             self.merging_window.update_idletasks()
             preview_x = self.root.winfo_x() + 400
             preview_y = self.root.winfo_y() + 100
             self.merging_window.geometry(f"200x60+{preview_x}+{preview_y}")
-            
-            label = tk.Label(
+
+            self.merging_label = tk.Label(
                 self.merging_window,
-                text="视频生成中...",
-                bg='#1a1a2e',
-                fg='white',
-                font=('Arial', 14, 'bold')
+                text=f"视频生成中 {self.merge_progress}%",
+                bg="#1a1a2e",
+                fg="white",
+                font=("Arial", 14, "bold"),
             )
-            label.pack(expand=True)
-            
+            self.merging_label.pack(expand=True)
+
+            def update_progress():
+                if self.merging_in_progress and hasattr(self, 'merging_window') and self.merging_window:
+                    try:
+                        self.merging_label.config(text=f"视频生成中 {self.merge_progress}%")
+                        self.merging_window.after(10000, update_progress)
+                    except:
+                        pass
+            self.merging_window.after(10000, update_progress)
+
             return
-        
+
         # 清除合并提示
-        if hasattr(self, 'merging_window') and self.merging_window:
+        if hasattr(self, "merging_window") and self.merging_window:
             try:
                 self.merging_window.destroy()
             except:
                 pass
             self.merging_window = None
-        
+
         # 启用播放按钮
         self.play_btn.config(state=tk.NORMAL)
-        
+
         # 计算视频时长
         self.calculate_video_duration()
-        
+
         # 加载当前视频的标记 - 优先从文件加载
         saved_markers = self.load_markers_from_file()
         if saved_markers:
@@ -2099,13 +2706,13 @@ class ScreenRecorder:
         else:
             self.markers = []
             self.marker_count = 0
-        
+
         # 加载当前视频的片段
         print(f"\n=== 加载片段 ===")
         print(f"当前视频文件: {self.video_file}")
         print(f"当前会话目录: {self.current_session_dir}")
         print(f"video_clips中是否存在: {self.video_file in self.video_clips}")
-        
+
         if self.video_file in self.video_clips:
             # 从内存中加载片段
             print(f"从内存加载片段，数量: {len(self.video_clips[self.video_file])}")
@@ -2118,28 +2725,36 @@ class ScreenRecorder:
                 clip_dir = os.path.join(self.current_session_dir, self.clip_dir)
                 print(f"截取视频文件夹路径: {clip_dir}")
                 print(f"截取视频文件夹存在: {os.path.exists(clip_dir)}")
-                
+
                 if os.path.exists(clip_dir):
                     items = os.listdir(clip_dir)
                     print(f"截取视频文件夹中的项目数量: {len(items)}")
-                    
+
                     # 查找子目录（每个片段一个文件夹）
                     for item in items:
                         item_path = os.path.join(clip_dir, item)
                         if os.path.isdir(item_path):
                             # 验证这个文件夹是否是有效的片段文件夹
-                            is_valid, error_msg, clip_info = self.is_valid_clip_folder(item_path)
-                            print(f"检查文件夹: {item}, 有效: {is_valid}, 错误: {error_msg}")
-                            
+                            is_valid, error_msg, clip_info = self.is_valid_clip_folder(
+                                item_path
+                            )
+                            print(
+                                f"检查文件夹: {item}, 有效: {is_valid}, 错误: {error_msg}"
+                            )
+
                             if is_valid:
                                 print(f"找到有效片段文件夹: {item}")
                                 # 从签名文件中获取片段信息，或者构建默认信息
-                                clip = clip_info if clip_info else {
-                                    "id": len(self.clips) + 1,
-                                    "start": 0,
-                                    "end": 0,
-                                    "duration": 0
-                                }
+                                clip = (
+                                    clip_info
+                                    if clip_info
+                                    else {
+                                        "id": len(self.clips) + 1,
+                                        "start": 0,
+                                        "end": 0,
+                                        "duration": 0,
+                                    }
+                                )
                                 # 记录文件夹名称，用于后续操作
                                 clip["folder_name"] = item
                                 self.clips.append(clip)
@@ -2149,10 +2764,10 @@ class ScreenRecorder:
             print(f"总共添加 {len(self.clips)} 个片段")
             # 保存到video_clips字典
             self.video_clips[self.video_file] = self.clips.copy()
-        
+
         # 更新片段列表
         self.update_clips()
-        
+
         # 更新视频文件名标签和修改按钮
         if self.video_file:
             # 提取文件名
@@ -2164,55 +2779,55 @@ class ScreenRecorder:
             self.video_filename_label.config(text="")
             self.rename_btn.pack_forget()  # 隐藏修改按钮
             self.location_btn.pack_forget()  # 隐藏文件位置按钮
-        
+
         cap = cv2.VideoCapture(self.video_file)
         if not cap.isOpened():
             cap.release()
             return
-        
+
         # 读取第一帧
         ret, frame = cap.read()
         cap.release()
-        
+
         if not ret:
             return
-        
+
         # 转换颜色空间
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
+
         # 获取画布尺寸并缩放
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
-        
+
         if canvas_width > 0 and canvas_height > 0:
             img = Image.fromarray(frame)
             img_width, img_height = img.size
             canvas_ratio = canvas_width / canvas_height
             img_ratio = img_width / img_height
-            
+
             if canvas_ratio > img_ratio:
                 new_height = canvas_height
                 new_width = int(img_width * (canvas_height / img_height))
             else:
                 new_width = canvas_width
                 new_height = int(img_height * (canvas_width / img_width))
-            
+
             img = img.resize((new_width, new_height), Image.LANCZOS)
             imgtk = ImageTk.PhotoImage(image=img)
-            
+
             # 居中显示
             x_offset = (canvas_width - new_width) // 2
             y_offset = (canvas_height - new_height) // 2
             self.canvas.create_image(x_offset, y_offset, anchor=tk.NW, image=imgtk)
             self.canvas.imgtk = imgtk
-        
+
         # 更新进度条，显示当前视频的标记
         self.update_progress_bar()
 
         # 启用播放按钮和截取视频按钮
         self.play_btn.config(state=tk.NORMAL)
         self.clip_btn.config(state=tk.NORMAL)
-    
+
     def record_screen(self):
         target_fps = 30.0  # 目标帧率，仅用于控制录制节奏
         frame_interval = 1.0 / target_fps
@@ -2220,26 +2835,46 @@ class ScreenRecorder:
         frame_count = 0
 
         video_timestamps = []
-        recorded_frames = []  # 保存所有帧
-        
+
+        # 创建临时视频文件，录制时直接写入磁盘（避免内存溢出）
+        # 使用MJPEG编码（比XVID快10倍，保证录制帧率稳定）
+        temp_recording_file = self.video_file_no_audio + ".tmp.avi"
+        fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+        video_writer = cv2.VideoWriter(
+            temp_recording_file, fourcc, target_fps, (self.width, self.height)
+        )
+
+        if not video_writer.isOpened():
+            print(f"[录制] 无法创建视频写入器: {temp_recording_file}")
+            return
+
+        print(f"[录制] 创建临时视频文件，将实时写入磁盘: {temp_recording_file}")
+
         # 优化：使用mss截图（比pyautogui快3-5倍）
         try:
             import mss
         except Exception as e:
             print(f"[录制] 导入 mss 失败: {e}")
+            video_writer.release()
             return
-        
+
         try:
             with mss.mss() as sct:
-                monitor = {"left": self.x, "top": self.y, "width": self.width, "height": self.height}
-                
+                monitor = {
+                    "left": self.x,
+                    "top": self.y,
+                    "width": self.width,
+                    "height": self.height,
+                }
+
                 while self.recording:
                     if not self.paused:
                         frame_start_time = time.perf_counter()
                         sct_img = sct.grab(monitor)
                         frame = np.array(sct_img)
                         frame = frame[:, :, :3]
-                        recorded_frames.append(frame.copy())
+                        # 直接写入磁盘，不在内存中保留帧
+                        video_writer.write(frame)
                         pts = frame_start_time - self._master_clock_start
                         video_timestamps.append((frame_count, pts, frame_start_time))
                         self.recorded_frames += 1
@@ -2252,69 +2887,89 @@ class ScreenRecorder:
                     else:
                         next_frame_time = time.perf_counter()
                         time.sleep(0.05)
-            
+
+            # 录制结束，关闭视频写入器
+            video_writer.release()
+            print(f"[录制] 视频写入器已关闭，共写入 {frame_count} 帧")
+
+            self._temp_recording_file = temp_recording_file
             self._video_timestamps = video_timestamps
             self._save_video_timestamps()
-            self._recorded_frames = recorded_frames
             self._pending_timestamps = video_timestamps
-            print(f"[录制] 成功保存 {len(recorded_frames)} 帧")
+            print(f"[录制] 成功录制 {frame_count} 帧到临时文件: {temp_recording_file}")
         except Exception as e:
             print(f"[录制] mss截图失败: {e}")
+            video_writer.release()
             import traceback
+
             print(f"[录制] 异常堆栈: {traceback.format_exc()}")
-    
+
     def _encode_video_from_frames(self, frames, timestamps):
         """按时间戳重新编码视频，保证时长正确"""
         if not frames or not timestamps:
             return
-            
+
         print(f"\n===== [重编码调试] =====")
         print(f"[重编码] 帧数: {len(frames)}, timestamps数: {len(timestamps)}")
-        
+
         first_pts = timestamps[0][1]
         last_pts = timestamps[-1][1]
         total_duration_pts = last_pts - first_pts
-        
+
         first_wall = timestamps[0][2]
         last_wall = timestamps[-1][2]
         total_duration_wall = last_wall - first_wall
-        
-        print(f"[重编码] first_pts={first_pts:.2f}, last_pts={last_pts:.2f}, duration_pts={total_duration_pts:.2f}s")
-        print(f"[重编码] first_wall={first_wall:.2f}, last_wall={last_wall:.2f}, duration_wall={total_duration_wall:.2f}s")
-        
+
+        print(
+            f"[重编码] first_pts={first_pts:.2f}, last_pts={last_pts:.2f}, duration_pts={total_duration_pts:.2f}s"
+        )
+        print(
+            f"[重编码] first_wall={first_wall:.2f}, last_wall={last_wall:.2f}, duration_wall={total_duration_wall:.2f}s"
+        )
+
         total_duration = total_duration_pts
         print(f"[重编码] 最终使用时长: {total_duration:.2f}秒")
-        
+
         target_fps = 30.0
         target_frames = int(round(total_duration * target_fps))
-        
+
         print(f"[重编码] 目标帧数: {target_frames} (帧率: {target_fps} fps)")
-        
+
         temp_video_file = self.video_file_no_audio + "_temp.avi"
-        out = cv2.VideoWriter(temp_video_file, cv2.VideoWriter_fourcc(*'XVID'), target_fps, (self.width, self.height))
-        
+        out = cv2.VideoWriter(
+            temp_video_file,
+            cv2.VideoWriter_fourcc(*"XVID"),
+            target_fps,
+            (self.width, self.height),
+        )
+
         if not out.isOpened():
             print(f"[重编码] 无法创建重编码输出文件")
             return
-        
+
         target_pts = np.linspace(first_pts, last_pts, target_frames)
-        
+
         print(f"[重编码] 目标时间戳范围: {target_pts[0]:.2f} ~ {target_pts[-1]:.2f}")
-        
+
         current_frame_idx = 0
         for i in range(target_frames):
-            while current_frame_idx < len(timestamps) - 1 and timestamps[current_frame_idx + 1][1] < target_pts[i]:
+            while (
+                current_frame_idx < len(timestamps) - 1
+                and timestamps[current_frame_idx + 1][1] < target_pts[i]
+            ):
                 current_frame_idx += 1
-            
+
             if i % 100 == 0:
-                print(f"[重编码] 写帧 {i}/{target_frames} -> 原始帧 {current_frame_idx}/{len(frames)}")
-            
+                print(
+                    f"[重编码] 写帧 {i}/{target_frames} -> 原始帧 {current_frame_idx}/{len(frames)}"
+                )
+
             frame = frames[current_frame_idx]
             out.write(frame)
-        
+
         out.release()
         print(f"[重编码] 重编码完成，写入 {target_frames} 帧")
-        
+
         try:
             os.replace(temp_video_file, self.video_file_no_audio)
             print(f"[重编码] 已替换原文件: {self.video_file_no_audio}")
@@ -2330,7 +2985,7 @@ class ScreenRecorder:
 
     def _save_video_timestamps(self):
         try:
-            with open(self.video_timestamps_file, 'w') as f:
+            with open(self.video_timestamps_file, "w") as f:
                 f.write("# Video frame timestamps\n")
                 f.write("# frame_index, pts_seconds, wallclock_time\n")
                 for frame_idx, pts, wall_time in self._video_timestamps:
@@ -2344,68 +2999,69 @@ class ScreenRecorder:
         try:
             import pyaudiowpatch as pyaudio
             import wave
-            
+
             self._audio_format = pyaudio.paInt16
             self._audio_channels = 2
             self._audio_chunk = 1024
-            
+
             self._audio = pyaudio.PyAudio()
-            
+
             loopback_device_index = -1
             loopback_device_rate = 44100
-            
+
             for i in range(self._audio.get_device_count()):
                 device_info = self._audio.get_device_info_by_index(i)
-                if device_info['maxInputChannels'] > 0:
-                    device_name = device_info['name']
+                if device_info["maxInputChannels"] > 0:
+                    device_name = device_info["name"]
                     is_loopback = False
-                    if hasattr(device_info, 'isLoopbackDevice'):
-                        is_loopback = device_info['isLoopbackDevice']
-                    elif 'Loopback' in device_name or 'loopback' in device_name.lower():
+                    if hasattr(device_info, "isLoopbackDevice"):
+                        is_loopback = device_info["isLoopbackDevice"]
+                    elif "Loopback" in device_name or "loopback" in device_name.lower():
                         is_loopback = True
-                    
+
                     if is_loopback:
                         loopback_device_index = i
-                        loopback_device_rate = int(device_info['defaultSampleRate'])
+                        loopback_device_rate = int(device_info["defaultSampleRate"])
                         break
-            
+
             if loopback_device_index < 0:
                 for i in range(self._audio.get_device_count()):
                     device_info = self._audio.get_device_info_by_index(i)
-                    if device_info['maxInputChannels'] > 0:
-                        device_name = device_info['name']
-                        if ("Stereo Mix" in device_name or 
-                            "立体声混音" in device_name):
+                    if device_info["maxInputChannels"] > 0:
+                        device_name = device_info["name"]
+                        if "Stereo Mix" in device_name or "立体声混音" in device_name:
                             loopback_device_index = i
-                            loopback_device_rate = int(device_info['defaultSampleRate'])
+                            loopback_device_rate = int(device_info["defaultSampleRate"])
                             break
-            
+
             self._audio_stream = None
             self.audio_sample_rate = 44100
             self._audio_rate = 44100
             self._audio_use_silent = False
-            
+
             if loopback_device_index >= 0:
                 try:
-                    self._audio_stream = self._audio.open(format=self._audio_format, 
-                                                          channels=self._audio_channels,
-                                                          rate=loopback_device_rate, 
-                                                          input=True,
-                                                          frames_per_buffer=self._audio_chunk,
-                                                          input_device_index=loopback_device_index,
-                                                          stream_callback=self._audio_callback)
+                    self._audio_stream = self._audio.open(
+                        format=self._audio_format,
+                        channels=self._audio_channels,
+                        rate=loopback_device_rate,
+                        input=True,
+                        frames_per_buffer=self._audio_chunk,
+                        input_device_index=loopback_device_index,
+                        stream_callback=self._audio_callback,
+                    )
                     self._audio_rate = loopback_device_rate
                     self.audio_sample_rate = self._audio_rate
                     print(f"[音频] 设备就绪，采样率: {self._audio_rate}")
                 except Exception as e:
                     print(f"[音频] 设备打开失败: {e}")
-            
+
             if self._audio_stream is None:
                 print("[音频] 使用静音模式")
                 self._audio_use_silent = True
                 self.audio_sample_rate = 44100
                 self._audio_rate = 44100
-            
+
         except Exception as e:
             print(f"[音频] 初始化失败: {e}")
             self._audio_use_silent = True
@@ -2416,34 +3072,40 @@ class ScreenRecorder:
     def _audio_callback(self, in_data, frame_count, time_info, status):
         """音频回调函数 - 每次有数据时自动调用"""
         import pyaudiowpatch as pyaudio
-        
+
         # 检查是否停止录制
         if not self.recording:
             return (None, pyaudio.paComplete)
-            
+
         try:
             if self.recording and not self.paused:
                 with self.audio_lock:
                     # 存储原始音频数据（用于直接拼接）
                     self.audio_frames.append(bytes(in_data))
                     self.audio_total_written += len(in_data)
-                    
+
                     # 同时保存带时间戳的数据（用于调试和备用）
-                    if hasattr(self, '_master_clock_start'):
+                    if hasattr(self, "_master_clock_start"):
                         current_time = time.perf_counter()
                         pts = current_time - self._master_clock_start
                         self._audio_chunks_with_pts.append((pts, bytes(in_data)))
-                        
-                    if hasattr(self, '_audio_paused_at') and self._audio_paused_at > 0:
-                        self._audio_total_paused_time += (time.perf_counter() - self._audio_paused_at)
+
+                    if hasattr(self, "_audio_paused_at") and self._audio_paused_at > 0:
+                        self._audio_total_paused_time += (
+                            time.perf_counter() - self._audio_paused_at
+                        )
                         self._audio_paused_at = 0.0
-            elif self.paused and hasattr(self, '_audio_paused_at') and self._audio_paused_at == 0.0:
+            elif (
+                self.paused
+                and hasattr(self, "_audio_paused_at")
+                and self._audio_paused_at == 0.0
+            ):
                 self._audio_paused_at = time.perf_counter()
         except Exception as e:
             print(f"[音频] 回调警告: {e}")
-        
+
         return (None, pyaudio.paContinue)
-    
+
     def _record_audio_thread(self):
         """使用已初始化的音频设备进行录制（回调模式）- 带有PTS"""
         try:
@@ -2451,11 +3113,19 @@ class ScreenRecorder:
 
             if self._audio_use_silent:
                 print("[音频] 开始录制静音")
-                frames = self.generate_silent_audio(44100, self._audio_channels, self._audio_format)
+                frames = self.generate_silent_audio(
+                    44100, self._audio_channels, self._audio_format
+                )
                 if self._audio:
                     self._audio.terminate()
-                self.save_audio_file(frames, self.audio_file, self._audio_channels,
-                                    self._audio_rate, self._audio_format, self._audio)
+                self.save_audio_file(
+                    frames,
+                    self.audio_file,
+                    self._audio_channels,
+                    self._audio_rate,
+                    self._audio_format,
+                    self._audio,
+                )
                 return
 
             # 重置音频数据存储
@@ -2464,26 +3134,26 @@ class ScreenRecorder:
             self.audio_total_written = 0
             self._audio_total_paused_time = 0.0
             self._audio_paused_at = 0.0
-            
+
             print("[音频] 开始录制音频（回调模式）")
-            
+
             self._audio_stream.start_stream()
-            
+
             # 等待录制停止
             while self.recording:
                 time.sleep(0.1)
-            
+
             print("[音频] 开始停止录制...")
-            
+
             # 第一步：停止音频流（不要先读数据）
             if self._audio_stream.is_active():
                 self._audio_stream.stop_stream()
                 print("[音频] 音频流已停止")
-            
+
             # 第二步：等待回调完全退出（重要！）
             time.sleep(0.1)
             print("[音频] 等待回调退出完成")
-            
+
             # 第三步：关闭流
             self._audio_stream.close()
             self._audio.terminate()
@@ -2491,38 +3161,42 @@ class ScreenRecorder:
 
             # 第四步：在锁保护下合并所有音频数据
             with self.audio_lock:
-                full_audio = b''.join(self.audio_frames)
-            
+                full_audio = b"".join(self.audio_frames)
+
             print(f"[音频] 合并完成，总字节数: {len(full_audio)}")
-            
+
             # 第五步：计算开头静音（补偿启动延迟）
             sample_rate = self._audio_rate
             channels = self._audio_channels
             bytes_per_sample = 2  # 16-bit
-            
+
             silence_samples = 0
             if self._audio_chunks_with_pts:
                 first_pts = self._audio_chunks_with_pts[0][0]
                 silence_samples = max(0, int(round(first_pts * sample_rate)))
-                print(f"[音频] 第一帧PTS: {first_pts:.4f}s, 补静音: {silence_samples}采样")
-            
+                print(
+                    f"[音频] 第一帧PTS: {first_pts:.4f}s, 补静音: {silence_samples}采样"
+                )
+
             # 创建静音数据
-            silence = b'\x00' * (silence_samples * channels * bytes_per_sample)
-            
+            silence = b"\x00" * (silence_samples * channels * bytes_per_sample)
+
             # 合并静音和音频
             final_pcm = silence + full_audio
-            
+
             print(f"[音频] 最终PCM长度: {len(final_pcm)}字节")
-            
+
             # 第六步：保存为 WAV 文件（使用 wave 模块直接写入）
-            with wave.open(self.audio_file, 'wb') as wf:
+            with wave.open(self.audio_file, "wb") as wf:
                 wf.setnchannels(channels)
                 wf.setsampwidth(bytes_per_sample)
                 wf.setframerate(sample_rate)
                 wf.writeframes(final_pcm)
-            
+
             print(f"[音频] 音频保存成功: {self.audio_file}")
-            print(f"[音频] 音频时长: {len(final_pcm) / (channels * bytes_per_sample * sample_rate):.2f}秒")
+            print(
+                f"[音频] 音频时长: {len(final_pcm) / (channels * bytes_per_sample * sample_rate):.2f}秒"
+            )
 
             # 第七步：重置计数器
             with self.audio_lock:
@@ -2532,26 +3206,31 @@ class ScreenRecorder:
 
             # 保存时间戳文件（用于调试）
             self._save_audio_timestamps_with_pts()
-            
+
             print("[音频] 录制完成，音频文件已保存")
 
         except Exception as e:
             print(f"[音频] 录制失败: {e}")
             try:
                 import pyaudio
+
                 audio = pyaudio.PyAudio()
                 frames = self.generate_silent_audio(44100, 2, pyaudio.paInt16)
-                self.save_audio_file(frames, self.audio_file, 2, 44100, pyaudio.paInt16, audio)
+                self.save_audio_file(
+                    frames, self.audio_file, 2, 44100, pyaudio.paInt16, audio
+                )
                 audio.terminate()
             except:
                 self.audio_file = None
 
     def _save_audio_timestamps_with_pts(self):
         try:
-            with open(self.audio_timestamps_file, 'w') as f:
+            with open(self.audio_timestamps_file, "w") as f:
                 f.write("# Audio chunk timestamps with PCM data\n")
                 f.write("# chunk_index, pts_seconds, pcm_data_length\n")
-                for chunk_idx, (pts, pcm_data) in enumerate(self._audio_chunks_with_pts):
+                for chunk_idx, (pts, pcm_data) in enumerate(
+                    self._audio_chunks_with_pts
+                ):
                     f.write(f"{chunk_idx},{pts:.6f},{len(pcm_data)}\n")
             print(f"[音频] 时间戳已保存: {self.audio_timestamps_file}")
         except Exception as e:
@@ -2560,11 +3239,16 @@ class ScreenRecorder:
     def _rebuild_audio_by_timestamps(self):
         print("[音频] 开始顺序拼接音频...")
 
-        if not hasattr(self, '_audio_chunks_with_pts') or not self._audio_chunks_with_pts:
+        if (
+            not hasattr(self, "_audio_chunks_with_pts")
+            or not self._audio_chunks_with_pts
+        ):
             print("[音频] 没有音频数据")
             return
 
-        if not hasattr(self, '_master_clock_start') or not hasattr(self, '_master_clock_end'):
+        if not hasattr(self, "_master_clock_start") or not hasattr(
+            self, "_master_clock_end"
+        ):
             print("[音频] 缺少主时钟时间戳，使用旧方法")
             self._rebuild_audio_legacy()
             return
@@ -2575,107 +3259,123 @@ class ScreenRecorder:
 
         bytes_per_sample = 2  # 16-bit
         bytes_per_frame = bytes_per_sample * channels
-        
+
         # 使用录制的主时钟时长作为音频缓冲区长度
         total_duration = self._master_clock_end - self._master_clock_start
-        
+
         # 安全检查：确保时长为正
         if total_duration <= 0:
             print(f"[音频] 警告：无效的录制时长 {total_duration:.2f}秒，使用音频块估算")
             # 使用音频块数量估算时长
             if self._audio_chunks_with_pts:
-                total_duration = len(self._audio_chunks_with_pts) * chunk_size / sample_rate
+                total_duration = (
+                    len(self._audio_chunks_with_pts) * chunk_size / sample_rate
+                )
             else:
                 total_duration = 1.0  # 最小1秒
-        
+
         total_samples = int(total_duration * sample_rate)
         buffer_length = total_samples * bytes_per_frame
-        
+
         # 安全检查：确保缓冲区长度非负
         if buffer_length < 0:
             print(f"[音频] 错误：缓冲区长度为负 {buffer_length}，使用默认值")
             buffer_length = sample_rate * bytes_per_frame  # 默认1秒
-        
+
         print(f"[音频] 参数: 采样率={sample_rate}, 通道={channels}, chunk={chunk_size}")
         print(f"[音频] 录制时长: {total_duration:.2f}秒, 总采样数: {total_samples}")
         print(f"[音频] 缓冲区长度: {buffer_length}字节")
-        
+
         # 创建缓冲区（自动初始化为零，即静音）
         pcm_buffer = bytearray(buffer_length)
-        
+
         # 获取音频块数量和预期帧数
         actual_frames = len(self._audio_chunks_with_pts)
         expected_frames = int(total_duration * sample_rate / chunk_size)
         print(f"[音频] 实际音频块数: {actual_frames}, 预期帧数: {expected_frames}")
-        
+
         if actual_frames < expected_frames * 0.5:
-            print(f"[音频] 警告：音频丢帧严重！仅采集到 {actual_frames} / {expected_frames} 帧")
-        
+            print(
+                f"[音频] 警告：音频丢帧严重！仅采集到 {actual_frames} / {expected_frames} 帧"
+            )
+
         # 将音频块写入正确的位置
         first_pts = self._audio_chunks_with_pts[0][0]
         print(f"[音频] 第一帧PTS: {first_pts:.4f}秒")
-        
+
         for pts, chunk_data in self._audio_chunks_with_pts:
             # 计算这个音频块应该放在缓冲区的哪个位置
             # pts已经是相对于_master_clock_start的偏移，直接使用即可
             start_sample = int(round(pts * sample_rate))
             start_byte = start_sample * bytes_per_frame
             end_byte = start_byte + len(chunk_data)
-            
+
             # 安全检查：确保start_byte非负
             if start_byte < 0:
                 print(f"[音频] 警告：跳过负位置 PTS={pts:.4f}, start_byte={start_byte}")
                 continue
             if start_byte >= len(pcm_buffer):
                 # PTS超出录制时长，跳过
-                print(f"[音频] 警告：跳过超出范围的 PTS={pts:.4f}, start_byte={start_byte}")
+                print(
+                    f"[音频] 警告：跳过超出范围的 PTS={pts:.4f}, start_byte={start_byte}"
+                )
                 continue
-                
+
             # 确保不溢出
             if end_byte > len(pcm_buffer):
-                chunk_data = chunk_data[:len(pcm_buffer) - start_byte]
+                chunk_data = chunk_data[: len(pcm_buffer) - start_byte]
                 end_byte = len(pcm_buffer)
-            
+
             # 将数据写入缓冲区
             pcm_buffer[start_byte:end_byte] = chunk_data
-        
+
         # 对音频开头做200个采样的线性淡入（约4ms），消除阶跃杂音
         import struct
+
         fade_len = min(200, total_samples)
         if fade_len > 0 and len(pcm_buffer) >= fade_len * bytes_per_frame:
             print(f"[音频] 开头淡入处理: {fade_len}采样")
             for i in range(fade_len):
                 idx = i * bytes_per_frame
                 # 提取左右声道的16-bit值（little-endian）
-                left = struct.unpack_from('<h', pcm_buffer, idx)[0]
-                right = struct.unpack_from('<h', pcm_buffer, idx + 2)[0]
+                left = struct.unpack_from("<h", pcm_buffer, idx)[0]
+                right = struct.unpack_from("<h", pcm_buffer, idx + 2)[0]
                 # 线性增益因子，从 0 → 1
                 factor = i / fade_len
                 left = int(left * factor)
                 right = int(right * factor)
                 # 覆盖缓冲区中的这两个采样
-                struct.pack_into('<hh', pcm_buffer, idx, left, right)
-        
+                struct.pack_into("<hh", pcm_buffer, idx, left, right)
+
         # 按 chunk_size 切分成帧
         bytes_per_chunk = chunk_size * bytes_per_frame
         final_frames = []
         for i in range(0, len(pcm_buffer), bytes_per_chunk):
-            chunk = pcm_buffer[i:i + bytes_per_chunk]
+            chunk = pcm_buffer[i : i + bytes_per_chunk]
             if len(chunk) < bytes_per_chunk:
-                chunk = chunk + b'\x00' * (bytes_per_chunk - len(chunk))
+                chunk = chunk + b"\x00" * (bytes_per_chunk - len(chunk))
             final_frames.append(chunk)
 
         print(f"[音频] 重建完成，共 {len(final_frames)} 帧")
         print(f"[音频] 音频时长: {len(final_frames) * chunk_size / sample_rate:.2f}秒")
 
-        self.save_audio_file(final_frames, self.audio_file, channels,
-                            sample_rate, self._audio_format, self._audio)
-    
+        self.save_audio_file(
+            final_frames,
+            self.audio_file,
+            channels,
+            sample_rate,
+            self._audio_format,
+            self._audio,
+        )
+
     def _rebuild_audio_legacy(self):
         """旧的音频重建方法（兼容模式）"""
         print("[音频] 使用旧方法重建音频...")
-        
-        if not hasattr(self, '_audio_chunks_with_pts') or not self._audio_chunks_with_pts:
+
+        if (
+            not hasattr(self, "_audio_chunks_with_pts")
+            or not self._audio_chunks_with_pts
+        ):
             print("[音频] 没有音频数据")
             return
 
@@ -2688,87 +3388,100 @@ class ScreenRecorder:
         bytes_per_chunk = chunk_size * bytes_per_frame
 
         print(f"[音频] 参数: 采样率={sample_rate}, 通道={channels}, chunk={chunk_size}")
-        
+
         # 1. 精确计算开头需要补多少静音（四舍五入）
         first_pts = self._audio_chunks_with_pts[0][0]
         silence_start_samples = 0
         if first_pts > 0:
             silence_start_samples = max(0, round(first_pts * sample_rate))
-            print(f"[音频] 第一帧PTS: {first_pts:.4f}s, 补静音: {silence_start_samples}采样")
-        
+            print(
+                f"[音频] 第一帧PTS: {first_pts:.4f}s, 补静音: {silence_start_samples}采样"
+            )
+
         # 2. 顺序拼接所有音频块
         pcm_buffer = bytearray()
         for pts, chunk_data in self._audio_chunks_with_pts:
             pcm_buffer.extend(chunk_data)
-        
+
         # 3. 构建静音段
         silence = bytearray(silence_start_samples * bytes_per_frame)
-        
+
         # 4. 对音频开头做200个采样的线性淡入
         import struct
+
         fade_len = min(200, len(pcm_buffer) // bytes_per_frame)
         if fade_len > 0:
             print(f"[音频] 开头淡入处理: {fade_len}采样")
             for i in range(fade_len):
                 idx = i * bytes_per_frame
-                left = struct.unpack_from('<h', pcm_buffer, idx)[0]
-                right = struct.unpack_from('<h', pcm_buffer, idx + 2)[0]
+                left = struct.unpack_from("<h", pcm_buffer, idx)[0]
+                right = struct.unpack_from("<h", pcm_buffer, idx + 2)[0]
                 factor = i / fade_len
                 left = int(left * factor)
                 right = int(right * factor)
-                struct.pack_into('<hh', pcm_buffer, idx, left, right)
-        
+                struct.pack_into("<hh", pcm_buffer, idx, left, right)
+
         # 5. 拼接静音和音频
         final_pcm = bytes(silence) + bytes(pcm_buffer)
-        
+
         # 6. 按 chunk_size 切分成帧
         final_frames = []
         for i in range(0, len(final_pcm), bytes_per_chunk):
-            chunk = final_pcm[i:i + bytes_per_chunk]
+            chunk = final_pcm[i : i + bytes_per_chunk]
             if len(chunk) < bytes_per_chunk:
-                chunk = chunk + b'\x00' * (bytes_per_chunk - len(chunk))
+                chunk = chunk + b"\x00" * (bytes_per_chunk - len(chunk))
             final_frames.append(chunk)
 
         print(f"[音频] 拼接完成，总帧数: {len(final_frames)}")
 
-        self.save_audio_file(final_frames, self.audio_file, channels,
-                            sample_rate, self._audio_format, self._audio)
+        self.save_audio_file(
+            final_frames,
+            self.audio_file,
+            channels,
+            sample_rate,
+            self._audio_format,
+            self._audio,
+        )
 
     def record_audio(self):
         """旧的录制接口，保持兼容性（现在默认不使用）"""
         self._init_audio_recorder()
         self._record_audio_thread()
-    
+
     def generate_silent_audio(self, rate, channels, format_type):
         """生成静音音频数据（持续约60秒）"""
         import pyaudio
+
         chunk = 1024
         duration = 60  # 生成60秒静音
         total_frames = int(rate / chunk * duration)
         sample_width = pyaudio.get_sample_size(format_type)
-        silent_data = b'\x00' * chunk * channels * sample_width
+        silent_data = b"\x00" * chunk * channels * sample_width
         return [silent_data] * total_frames
-    
+
     def save_audio_file(self, frames, file_path, channels, rate, format_type, audio):
         """保存音频文件"""
         import wave
+
         try:
-            wf = wave.open(file_path, 'wb')
+            wf = wave.open(file_path, "wb")
             wf.setnchannels(channels)
             wf.setsampwidth(audio.get_sample_size(format_type))
             wf.setframerate(rate)
-            wf.writeframes(b''.join(frames))
+            wf.writeframes(b"".join(frames))
             wf.close()
             print(f"[音频] 音频保存成功: {file_path}")
-            print(f"[音频] 音频帧数: {len(frames)}, 每帧: 1024 bytes, 采样率: {rate}, 时长: {len(frames) * 1024 / rate:.2f}秒")
+            print(
+                f"[音频] 音频帧数: {len(frames)}, 每帧: 1024 bytes, 采样率: {rate}, 时长: {len(frames) * 1024 / rate:.2f}秒"
+            )
         except Exception as e:
             print(f"[音频] 保存失败: {e}")
-    
-    def merge_audio_video(self):
-        """使用FFmpeg合并视频和音频 - 直接合并，静音自然过渡"""
-        print("\n[合并] ========== 开始音视频合并===========")
 
-        if not hasattr(self, 'video_file_no_audio'):
+    def merge_audio_video(self):
+        """使用FFmpeg合并视频和音频 - 重编码为H.264+AAC+MP4，兼容第三方播放器"""
+        print("\n[合并] ========== 开始音视频合并 ===========")
+
+        if not hasattr(self, "video_file_no_audio"):
             print("[合并] 错误：没有 video_file_no_audio 属性")
             return
 
@@ -2778,27 +3491,50 @@ class ScreenRecorder:
 
         print(f"[合并] 视频文件: {self.video_file_no_audio}")
 
-        if not hasattr(self, 'audio_file'):
-            print("[合并] 错误：没有 audio_file 属性")
-            os.rename(self.video_file_no_audio, self.video_file)
-            return
+        # 计算实际帧率
+        actual_fps = 30.0
+        has_audio = False
+        real_frames = 0
+        _merge_start = time.time()
+        try:
+            self.merge_progress = 63
+            print(f"[合并调试] 开始逐帧计数, 文件: {self.video_file_no_audio} (已过{time.time()-_merge_start:.1f}秒)")
+            cap_check = cv2.VideoCapture(self.video_file_no_audio)
+            while True:
+                ret, _ = cap_check.read()
+                if not ret:
+                    break
+                real_frames += 1
+                if real_frames % 500 == 0:
+                    print(f"[合并调试] 已计数 {real_frames} 帧... (已过{time.time()-_merge_start:.1f}秒)")
+            cap_check.release()
+            self.merge_progress = 70
+            print(f"[合并调试] 逐帧计数完成, 共 {real_frames} 帧, 耗时{time.time()-_merge_start:.1f}秒")
+            if (
+                hasattr(self, "_real_recorded_duration")
+                and self._real_recorded_duration > 0
+                and real_frames > 0
+            ):
+                actual_fps = real_frames / self._real_recorded_duration
+                print(
+                    f"[合并] 检测到视频: {real_frames}帧, 时长={self._real_recorded_duration:.2f}秒, 实际帧率={actual_fps:.2f}fps"
+                )
+            else:
+                print(f"[合并] 检测到视频: {real_frames}帧")
+        except Exception as e:
+            print(f"[合并] 检测帧率失败: {e}")
 
-        if not self.audio_file:
-            print("[合并] 警告：audio_file 为空")
-            os.rename(self.video_file_no_audio, self.video_file)
-            return
+        # 检查音频是否可用
+        if hasattr(self, "audio_file") and self.audio_file and os.path.exists(self.audio_file):
+            has_audio = True
+            print(f"[合并] 音频文件: {self.audio_file}")
+        else:
+            print("[合并] 无音频可用，仅处理视频")
 
-        if not os.path.exists(self.audio_file):
-            print(f"[合并] 警告：音频文件不存在: {self.audio_file}")
-            os.rename(self.video_file_no_audio, self.video_file)
-            return
-
-        print(f"[合并] 音频文件: {self.audio_file}")
         print(f"[合并] 输出文件: {self.video_file}")
 
-        print("[合并] 直接合并，音视频各自从0开始，前面的静音是录制启动时间差，自然过渡")
-
-        try:
+        def _do_ffmpeg_encode(extra_args):
+            """内部函数：执行FFmpeg重编码，带进度跟踪"""
             import subprocess
             import imageio_ffmpeg
 
@@ -2807,39 +3543,93 @@ class ScreenRecorder:
 
             cmd = [
                 ffmpeg_exe,
-                '-y',
-                '-i', self.video_file_no_audio,
-                '-i', self.audio_file,
-                '-c:v', 'copy',
-                '-c:a', 'copy',
-                self.video_file
+                "-y",
+                "-i",
+                self.video_file_no_audio,
+            ]
+            if has_audio:
+                cmd += ["-i", self.audio_file]
+            cmd += extra_args + [
+                "-r",
+                f"{actual_fps:.4f}",
+                "-movflags",
+                "+faststart",
+                self.video_file,
             ]
 
             print(f"[合并] 执行命令: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            print(f"[合并调试] FFmpeg开始时间: {time.time():.3f} (已过{time.time()-_merge_start:.1f}秒)")
+            total_frames = real_frames if real_frames > 0 else 1
+            process = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True, bufsize=1)
+            stderr_buf = []
+            _ff_line_count = 0
+            for line in process.stderr:
+                stderr_buf.append(line)
+                _ff_line_count += 1
+                if _ff_line_count <= 3:
+                    print(f"[合并调试] FFmpeg stderr: {line.rstrip()}")
+                if _ff_line_count % 100 == 0:
+                    print(f"[合并调试] FFmpeg已输出{_ff_line_count}行stderr (已过{time.time()-_merge_start:.1f}秒)")
+                if line.startswith('frame='):
+                    try:
+                        frame_str = line.split('=')[1].strip().split()[0]
+                        current_frame = int(frame_str)
+                        pct = 70 + int(current_frame / total_frames * 30)
+                        if pct != self.merge_progress:
+                            print(f"[合并调试] 进度更新: frame={current_frame}/{total_frames}, progress={pct}% (已过{time.time()-_merge_start:.1f}秒)")
+                        self.merge_progress = min(pct, 99)
+                    except Exception as e:
+                        print(f"[合并调试] 解析frame行异常: {e}, line={line.rstrip()}")
+            process.wait()
+            _encode_elapsed = time.time() - _merge_start
+            print(f"[合并调试] FFmpeg编码结束, 耗时{_encode_elapsed:.1f}秒, returncode={process.returncode}")
+            return subprocess.CompletedProcess(cmd, process.returncode, '', ''.join(stderr_buf))
+
+        try:
+            if has_audio:
+                result = _do_ffmpeg_encode([
+                    "-c:v", "libx264",
+                    "-preset", "ultrafast",
+                    "-crf", "23",
+                    "-c:a", "aac",
+                    "-b:a", "128k",
+                ])
+            else:
+                result = _do_ffmpeg_encode([
+                    "-c:v", "libx264",
+                    "-preset", "ultrafast",
+                    "-crf", "23",
+                    "-an",
+                ])
 
             if result.returncode == 0:
                 print("[合并] 音视频合并成功")
+                self.merge_progress = 100
                 if os.path.exists(self.video_file_no_audio):
                     os.remove(self.video_file_no_audio)
-                    print(f"[合并] 删除临时视频文件")
-                if os.path.exists(self.audio_file):
+                    print("[合并] 删除临时视频文件")
+                if has_audio and os.path.exists(self.audio_file):
                     os.remove(self.audio_file)
-                    print(f"[合并] 删除临时音频文件")
-                if hasattr(self, 'video_timestamps_file') and os.path.exists(self.video_timestamps_file):
+                    print("[合并] 删除临时音频文件")
+                if hasattr(self, "video_timestamps_file") and os.path.exists(
+                    self.video_timestamps_file
+                ):
                     os.remove(self.video_timestamps_file)
-                    print(f"[合并] 删除视频时间戳文件")
-                if hasattr(self, 'audio_timestamps_file') and os.path.exists(self.audio_timestamps_file):
+                    print("[合并] 删除视频时间戳文件")
+                if hasattr(self, "audio_timestamps_file") and os.path.exists(
+                    self.audio_timestamps_file
+                ):
                     os.remove(self.audio_timestamps_file)
-                    print(f"[合并] 删除音频时间戳文件")
+                    print("[合并] 删除音频时间戳文件")
                 if os.path.exists(self.video_file):
                     print(f"[合并] 输出文件已生成: {self.video_file}")
             else:
                 print(f"[合并] 失败，返回码: {result.returncode}")
                 print(f"[合并] 错误信息: {result.stderr}")
                 print(f"[合并] 标准输出: {result.stdout}")
-                os.rename(self.video_file_no_audio, self.video_file)
-                print(f"[合并] 使用原始无音频视频")
+                if os.path.exists(self.video_file_no_audio):
+                    os.rename(self.video_file_no_audio, self.video_file)
+                    print("[合并] 使用原始无音频视频（可能不兼容第三方播放器）")
 
         except Exception as e:
             print(f"[合并] 异常: {type(e).__name__}: {e}")
@@ -2847,53 +3637,54 @@ class ScreenRecorder:
             print(f"[合并] 异常堆栈: {traceback.format_exc()}")
             if os.path.exists(self.video_file_no_audio):
                 os.rename(self.video_file_no_audio, self.video_file)
-                print(f"[合并] 使用原始无音频视频")
-    
+                print("[合并] 使用原始无音频视频（可能不兼容第三方播放器）")
+
     def save_markers_to_file(self):
         """保存标记信息到会话目录的JSON文件（包含工具校验码）"""
         if not self.current_session_dir:
             print("[保存] 跳过：当前会话目录为空")
             return
-        
+
         markers_file = os.path.join(self.current_session_dir, "markers.json")
         try:
             # 先测试目录是否可写
             test_file = os.path.join(self.current_session_dir, ".test_write")
-            with open(test_file, 'w') as f:
+            with open(test_file, "w") as f:
                 f.write("test")
             os.remove(test_file)
             print(f"[保存] 目录可写: {self.current_session_dir}")
-            
+
             # 实际保存数据
             data = {
                 "tool_signature": "live_recorder_marker_tool_v1",
-                "markers": self.markers
+                "markers": self.markers,
             }
-            with open(markers_file, 'w', encoding='utf-8') as f:
+            with open(markers_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             print(f"[保存] 标记已保存到: {markers_file}")
-            
+
             # 验证文件是否真的存在
             if os.path.exists(markers_file):
                 file_size = os.path.getsize(markers_file)
                 print(f"[保存] 文件大小: {file_size} 字节")
             else:
                 print(f"[警告] 文件创建后不存在！")
-                
+
         except Exception as e:
             print(f"[错误] 保存标记失败: {type(e).__name__}: {e}")
             import traceback
+
             traceback.print_exc()
-    
+
     def load_markers_from_file(self):
         """从会话目录的JSON文件加载标记信息（兼容新旧格式）"""
         if not self.current_session_dir:
             return []
-        
+
         markers_file = os.path.join(self.current_session_dir, "markers.json")
         if os.path.exists(markers_file):
             try:
-                with open(markers_file, 'r', encoding='utf-8') as f:
+                with open(markers_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 # 兼容新旧格式
                 if isinstance(data, dict) and "markers" in data:
@@ -2905,60 +3696,64 @@ class ScreenRecorder:
             except Exception as e:
                 print(f"加载标记失败: {e}")
         return []
-    
+
     def is_valid_tool_session(self, session_path):
         """
         验证会话目录是否为此工具产生的
-        
+
         返回: (is_valid, error_message)
         """
         session_dir = os.path.basename(session_path)
-        
+
         # 条件 1：目录名格式正确（YYYYMMDD_HHMMSS）
-        if len(session_dir) != 15 or session_dir[8] != '_':
+        if len(session_dir) != 15 or session_dir[8] != "_":
             return False, "目录名格式不正确"
         date_part = session_dir[:8]
         time_part = session_dir[9:]
         if not date_part.isdigit() or not time_part.isdigit():
             return False, "目录名格式不正确"
-        
+
         # 条件 2：查找主视频文件
         clip_dir = os.path.join(session_path, self.clip_dir)
         all_files = os.listdir(session_path) if os.path.exists(session_path) else []
-        video_files = [f for f in all_files if f.endswith('.avi') and os.path.join(session_path, f) != clip_dir]
-        if os.path.exists(clip_dir):
-            clip_avi_files = [f for f in os.listdir(clip_dir) if f.endswith('.avi')]
-            video_files = [f for f in video_files if f not in clip_avi_files]
-        
+        video_files = [
+            f
+            for f in all_files
+            if f.endswith(".mp4") and os.path.join(session_path, f) != clip_dir
+        ]
+
         if not video_files:
             return False, "未找到主视频文件"
-        
+
         video_file = video_files[0]
-        
+
         # 条件 3：文件名格式正确（允许用户自定义文件名）
-        if not video_file.endswith('.avi'):
+        if not video_file.endswith(".mp4"):
             return False, "文件名格式不正确"
-        
+
         # 条件 4：存在 markers.json 文件
         markers_file = os.path.join(session_path, "markers.json")
         if not os.path.exists(markers_file):
             return False, "未找到标记文件"
-        
+
         # 条件 6：校验工具签名
         try:
-            with open(markers_file, 'r', encoding='utf-8') as f:
+            with open(markers_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            if isinstance(data, dict) and data.get("tool_signature") != "live_recorder_marker_tool_v1":
+            if (
+                isinstance(data, dict)
+                and data.get("tool_signature") != "live_recorder_marker_tool_v1"
+            ):
                 return False, "无效的工具签名"
         except Exception:
             return False, "标记文件格式错误"
-        
+
         return True, ""
-    
+
     def create_clip_signature(self, clip_folder_path, clip_info):
         """
         为截取的片段创建工具签名验证文件
-        
+
         参数:
             clip_folder_path: 片段文件夹路径
             clip_info: 片段信息字典
@@ -2968,57 +3763,65 @@ class ScreenRecorder:
             signature_data = {
                 "tool_signature": "live_recorder_marker_tool_v1",
                 "clip_info": clip_info,
-                "create_time": time.strftime('%Y%m%d_%H%M%S')
+                "create_time": time.strftime("%Y%m%d_%H%M%S"),
             }
-            
+
             # 保存为 JSON 文件
             signature_file = os.path.join(clip_folder_path, "clip_info.json")
-            with open(signature_file, 'w', encoding='utf-8') as f:
+            with open(signature_file, "w", encoding="utf-8") as f:
                 json.dump(signature_data, f, ensure_ascii=False, indent=2)
-            
+
             print(f"片段签名文件已创建: {signature_file}")
             return True
         except Exception as e:
             print(f"创建片段签名失败: {e}")
             return False
-    
+
     def is_valid_clip_folder(self, clip_folder_path):
         """
         验证片段文件夹是否为此工具产生的
-        
+
         参数:
             clip_folder_path: 片段文件夹路径
-        
+
         返回: (is_valid, error_message, clip_info)
         """
         # 检查是否存在 clip_info.json 文件
         signature_file = os.path.join(clip_folder_path, "clip_info.json")
         if not os.path.exists(signature_file):
             return False, "未找到片段签名文件", None
-        
+
         # 检查工具签名
         try:
-            with open(signature_file, 'r', encoding='utf-8') as f:
+            with open(signature_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            
-            if isinstance(data, dict) and data.get("tool_signature") != "live_recorder_marker_tool_v1":
+
+            if (
+                isinstance(data, dict)
+                and data.get("tool_signature") != "live_recorder_marker_tool_v1"
+            ):
                 return False, "无效的片段工具签名", None
-            
+
             clip_info = data.get("clip_info", {})
             return True, "", clip_info
         except Exception as e:
             print(f"验证片段签名失败: {e}")
             return False, "片段签名文件格式错误", None
-    
+
     def calculate_video_duration(self):
         print(f"\n===== [计算视频时长] =====")
         # 如果重编码时已经保存了真实录制时长，优先用那个！
-        if hasattr(self, '_real_recorded_duration') and self._real_recorded_duration > 0:
+        if (
+            hasattr(self, "_real_recorded_duration")
+            and self._real_recorded_duration > 0
+        ):
             self.video_duration = self._real_recorded_duration
-            print(f"[计算视频时长] 使用重编码保存的真实时长: {self.video_duration:.2f}秒")
+            print(
+                f"[计算视频时长] 使用重编码保存的真实时长: {self.video_duration:.2f}秒"
+            )
             print(f"===== [计算视频时长结束] =====\n")
             return
-        
+
         # 如果没有，才从文件读取
         if self.video_file:
             print(f"[计算视频时长] 从文件读取: {self.video_file}")
@@ -3033,36 +3836,54 @@ class ScreenRecorder:
                     print(f"[计算视频时长] 计算时长: {self.video_duration:.2f}秒")
                 cap.release()
         print(f"===== [计算视频时长结束] =====\n")
-    
+
     def update_progress_bar(self):
         if not self.recording:
-            print(f"\n[主页面进度条调试] current_time={self.current_time:.2f}s, video_duration={self.video_duration:.2f}s")
-        
-        self.progress_canvas.delete('all')
+            print(
+                f"\n[主页面进度条调试] current_time={self.current_time:.2f}s, video_duration={self.video_duration:.2f}s"
+            )
+
+        self.progress_canvas.delete("all")
         width = self.progress_canvas.winfo_width()
         height = self.progress_canvas.winfo_height()
         if width == 0 or height == 0:
             return
-        
+
         # 添加留白区域
         padding = 20  # 左右留白的宽度
         usable_width = width - 2 * padding
-        
+
         if self.video_duration > 0:
             progress = self.current_time / self.video_duration
         else:
             progress = 0
-        
+
         # 绘制背景
-        self.progress_canvas.create_rectangle(0, 0, width, height, fill="#333", outline="")
-        
+        self.progress_canvas.create_rectangle(
+            0, 0, width, height, fill="#333", outline=""
+        )
+
         # 绘制进度条（在画布下方，考虑留白）
         progress_bar_y = height - 30
         progress_bar_height = 20
         progress_width = int(usable_width * progress)
-        self.progress_canvas.create_rectangle(padding, progress_bar_y, width - padding, progress_bar_y + progress_bar_height, fill="#444", outline="")
-        self.progress_canvas.create_rectangle(padding, progress_bar_y, padding + progress_width, progress_bar_y + progress_bar_height, fill="#4CAF50", outline="")
-        
+        self.progress_canvas.create_rectangle(
+            padding,
+            progress_bar_y,
+            width - padding,
+            progress_bar_y + progress_bar_height,
+            fill="#444",
+            outline="",
+        )
+        self.progress_canvas.create_rectangle(
+            padding,
+            progress_bar_y,
+            padding + progress_width,
+            progress_bar_y + progress_bar_height,
+            fill="#4CAF50",
+            outline="",
+        )
+
         # 绘制黄色标记（在进度条上方）- 水滴形
         if self.recording or self.video_duration > 0:
             # 在录制模式下，使用 current_time 作为总时长
@@ -3072,76 +3893,131 @@ class ScreenRecorder:
             else:
                 # 修复：视频总时长只由 video_duration 决定，标记不能影响时长！
                 total_duration = self.video_duration if self.video_duration > 0 else 1
-            print(f"[调试] 绘制标记: 录制模式={self.recording}, video_duration={self.video_duration:.2f}, total_duration={total_duration:.2f}, 标记数量={len(self.markers)}")
+            print(
+                f"[调试] 绘制标记: 录制模式={self.recording}, video_duration={self.video_duration:.2f}, total_duration={total_duration:.2f}, 标记数量={len(self.markers)}"
+            )
             if total_duration > 0:
                 for idx, marker in enumerate(self.markers):
                     marker_time = marker["time"]
-                    print(f"[调试] 标记时间: {marker_time:.2f}, 条件: {marker_time} <= {total_duration}")
+                    print(
+                        f"[调试] 标记时间: {marker_time:.2f}, 条件: {marker_time} <= {total_duration}"
+                    )
                     if marker_time <= total_duration:
-                        marker_pos = padding + (marker_time / total_duration) * usable_width
+                        marker_pos = (
+                            padding + (marker_time / total_duration) * usable_width
+                        )
                         # 确保标记不会超出画布边界
-                        marker_pos = max(padding + 4, min(width - padding - 4, marker_pos))
-                        print(f"[调试] 绘制标记: 位置={marker_pos:.2f}, 时间={marker_time:.2f}, 画布宽度={width}")
-                        
+                        marker_pos = max(
+                            padding + 4, min(width - padding - 4, marker_pos)
+                        )
+                        print(
+                            f"[调试] 绘制标记: 位置={marker_pos:.2f}, 时间={marker_time:.2f}, 画布宽度={width}"
+                        )
+
                         # 获取标记名称
                         marker_name = marker.get("name", str(idx + 1))
-                        
+
                         # 绘制葫芦形标记（上面大圆、下面小圆，中间连接）
                         marker_pos_x = marker_pos
                         marker_top = progress_bar_y - 20
-                        
+
                         # 葫芦形的多边形点（近似SVG葫芦形状）
                         # 上面大圆部分
                         gourd_points = [
-                            marker_pos_x - 20, marker_top - 25,  # 左上
-                            marker_pos_x - 10, marker_top - 30,  # 上尖
-                            marker_pos_x + 10, marker_top - 30,  # 右上
-                            marker_pos_x + 20, marker_top - 25,  # 右中
-                            marker_pos_x + 20, marker_top - 10,  # 右下
-                            marker_pos_x + 14, marker_top - 5,   # 腰部右
-                            marker_pos_x + 14, marker_top + 5,   # 颈部右
-                            marker_pos_x + 6, marker_top + 10,   # 底部右
-                            marker_pos_x, marker_top + 20,       # 底部尖
-                            marker_pos_x - 6, marker_top + 10,   # 底部左
-                            marker_pos_x - 14, marker_top + 5,   # 颈部左
-                            marker_pos_x - 14, marker_top - 5,   # 腰部左
-                            marker_pos_x - 20, marker_top - 10,  # 左下
-                            marker_pos_x - 20, marker_top - 25,  # 左上闭合
+                            marker_pos_x - 20,
+                            marker_top - 25,  # 左上
+                            marker_pos_x - 10,
+                            marker_top - 30,  # 上尖
+                            marker_pos_x + 10,
+                            marker_top - 30,  # 右上
+                            marker_pos_x + 20,
+                            marker_top - 25,  # 右中
+                            marker_pos_x + 20,
+                            marker_top - 10,  # 右下
+                            marker_pos_x + 14,
+                            marker_top - 5,  # 腰部右
+                            marker_pos_x + 14,
+                            marker_top + 5,  # 颈部右
+                            marker_pos_x + 6,
+                            marker_top + 10,  # 底部右
+                            marker_pos_x,
+                            marker_top + 20,  # 底部尖
+                            marker_pos_x - 6,
+                            marker_top + 10,  # 底部左
+                            marker_pos_x - 14,
+                            marker_top + 5,  # 颈部左
+                            marker_pos_x - 14,
+                            marker_top - 5,  # 腰部左
+                            marker_pos_x - 20,
+                            marker_top - 10,  # 左下
+                            marker_pos_x - 20,
+                            marker_top - 25,  # 左上闭合
                         ]
-                        
+
                         marker_id = self.progress_canvas.create_polygon(
                             gourd_points, fill="#ffeb3b", outline="#fbc02d", width=1
                         )
-                        
+
                         # 在葫芦形中心添加标记名称
                         text_id = self.progress_canvas.create_text(
-                            marker_pos_x, marker_top - 10,
-                            text=marker_name, fill="#000000", font=('Arial', 10, 'bold')
+                            marker_pos_x,
+                            marker_top - 10,
+                            text=marker_name,
+                            fill="#000000",
+                            font=("Arial", 10, "bold"),
                         )
-                        
+
                         # 为标记添加标签
                         self.progress_canvas.addtag_withtag("yellow_marker", marker_id)
                         self.progress_canvas.addtag_withtag("yellow_marker", text_id)
-                        
+
                         # 格式化时间显示
                         marker_time_str = self.format_time(marker_time)
-                        
+
                         # 绑定点击事件和鼠标移入移出事件
                         try:
-                            self.progress_canvas.tag_bind(marker_id, "<Button-1>", lambda e, i=idx: self.jump_to_marker_and_play(i))
-                            self.progress_canvas.tag_bind(text_id, "<Button-1>", lambda e, i=idx: self.jump_to_marker_and_play(i))
-                            self.progress_canvas.tag_bind(marker_id, "<Enter>", lambda e, t=marker_time_str, x=marker_pos_x: self.show_marker_time_tooltip(t, x))
-                            self.progress_canvas.tag_bind(text_id, "<Enter>", lambda e, t=marker_time_str, x=marker_pos_x: self.show_marker_time_tooltip(t, x))
-                            self.progress_canvas.tag_bind(marker_id, "<Leave>", lambda e: self.hide_marker_time_tooltip())
-                            self.progress_canvas.tag_bind(text_id, "<Leave>", lambda e: self.hide_marker_time_tooltip())
+                            self.progress_canvas.tag_bind(
+                                marker_id,
+                                "<Button-1>",
+                                lambda e, i=idx: self.jump_to_marker_and_play(i),
+                            )
+                            self.progress_canvas.tag_bind(
+                                text_id,
+                                "<Button-1>",
+                                lambda e, i=idx: self.jump_to_marker_and_play(i),
+                            )
+                            self.progress_canvas.tag_bind(
+                                marker_id,
+                                "<Enter>",
+                                lambda e, t=marker_time_str, x=marker_pos_x: self.show_marker_time_tooltip(
+                                    t, x
+                                ),
+                            )
+                            self.progress_canvas.tag_bind(
+                                text_id,
+                                "<Enter>",
+                                lambda e, t=marker_time_str, x=marker_pos_x: self.show_marker_time_tooltip(
+                                    t, x
+                                ),
+                            )
+                            self.progress_canvas.tag_bind(
+                                marker_id,
+                                "<Leave>",
+                                lambda e: self.hide_marker_time_tooltip(),
+                            )
+                            self.progress_canvas.tag_bind(
+                                text_id,
+                                "<Leave>",
+                                lambda e: self.hide_marker_time_tooltip(),
+                            )
                         except Exception as ex:
                             print(f"[调试] 标记绑定失败: {ex}")
                             pass
-        
+
         # 在非录制模式下，确保黄色标记在最上层（但在剪辑标记之下）
         if not self.recording and self.markers:
             self.progress_canvas.tag_raise("yellow_marker")
-        
+
         # 绘制截取视频标识
         if self.clip_mode and self.video_duration > 0:
             total_duration = self.video_duration
@@ -3149,14 +4025,19 @@ class ScreenRecorder:
                 # 计算开始和结束位置，考虑留白
                 start_pos = padding + (self.clip_start / total_duration) * usable_width
                 end_pos = padding + (self.clip_end / total_duration) * usable_width
-                
+
                 # 绘制截取区域
                 if start_pos < end_pos:
                     self.clip_area_id = self.progress_canvas.create_rectangle(
-                        start_pos, 0, end_pos, height,
-                        fill="#33691e", outline="", stipple="gray50"
+                        start_pos,
+                        0,
+                        end_pos,
+                        height,
+                        fill="#33691e",
+                        outline="",
+                        stipple="gray50",
                     )
-                
+
                 # 绘制开始截取标识（长方形样式，在画布内）
                 rect_width = 50
                 rect_height = 120  # 长方形长度，确保在画布内显示
@@ -3165,114 +4046,161 @@ class ScreenRecorder:
                 start_rect_x2 = min(width, start_pos + rect_width // 2)
                 # 绘制长方形（在画布上方，中心与进度条位置对齐）
                 self.clip_start_id = self.progress_canvas.create_rectangle(
-                    start_rect_x1, 10,
-                    start_rect_x2, 10 + rect_height,
-                    fill="#4caf50", outline="#388e3c", width=2
+                    start_rect_x1,
+                    10,
+                    start_rect_x2,
+                    10 + rect_height,
+                    fill="#4caf50",
+                    outline="#388e3c",
+                    width=2,
                 )
                 # 添加截取入点文本（竖向排列4个字，居中显示）
                 start_text_id = self.progress_canvas.create_text(
-                    start_pos, 10 + rect_height // 2,
+                    start_pos,
+                    10 + rect_height // 2,
                     text="截\n取\n入\n点",
                     fill="white",
                     font=("Arial", 10, "bold"),
-                    anchor=tk.CENTER
+                    anchor=tk.CENTER,
                 )
                 # 创建一个透明的大区域用于点击，确保在画布范围内
                 start_hitbox_x1 = max(0, start_pos - 30)
                 start_hitbox_x2 = min(width, start_pos + 30)
                 start_hitbox_id = self.progress_canvas.create_rectangle(
-                    start_hitbox_x1, 5, start_hitbox_x2, 15 + rect_height,
-                    fill="", outline=""
+                    start_hitbox_x1,
+                    5,
+                    start_hitbox_x2,
+                    15 + rect_height,
+                    fill="",
+                    outline="",
                 )
-                
+
                 # 为开始标记的所有元素添加标签
                 self.progress_canvas.addtag_withtag("clip_start", self.clip_start_id)
                 self.progress_canvas.addtag_withtag("clip_start", start_text_id)
                 self.progress_canvas.addtag_withtag("clip_start", start_hitbox_id)
-                
+
                 # 绘制结束截取标识（长方形样式，在画布内）
                 # 计算结束标记的位置，确保在画布范围内
                 end_rect_x1 = max(0, end_pos - rect_width // 2)
                 end_rect_x2 = min(width, end_pos + rect_width // 2)
                 # 绘制长方形（在画布上方，中心与进度条位置对齐）
                 self.clip_end_id = self.progress_canvas.create_rectangle(
-                    end_rect_x1, 10,
-                    end_rect_x2, 10 + rect_height,
-                    fill="#f44336", outline="#d32f2f", width=2
+                    end_rect_x1,
+                    10,
+                    end_rect_x2,
+                    10 + rect_height,
+                    fill="#f44336",
+                    outline="#d32f2f",
+                    width=2,
                 )
                 # 添加截取出点文本（竖向排列4个字，居中显示）
                 end_text_id = self.progress_canvas.create_text(
-                    end_pos, 10 + rect_height // 2,
+                    end_pos,
+                    10 + rect_height // 2,
                     text="截\n取\n出\n点",
                     fill="white",
                     font=("Arial", 10, "bold"),
-                    anchor=tk.CENTER
+                    anchor=tk.CENTER,
                 )
                 # 创建一个透明的大区域用于点击，确保在画布范围内
                 end_hitbox_x1 = max(0, end_pos - 30)
                 end_hitbox_x2 = min(width, end_pos + 30)
                 end_hitbox_id = self.progress_canvas.create_rectangle(
-                    end_hitbox_x1, 5, end_hitbox_x2, 15 + rect_height,
-                    fill="", outline=""
+                    end_hitbox_x1,
+                    5,
+                    end_hitbox_x2,
+                    15 + rect_height,
+                    fill="",
+                    outline="",
                 )
-                
+
                 # 为结束标记的所有元素添加标签
                 self.progress_canvas.addtag_withtag("clip_end", self.clip_end_id)
                 self.progress_canvas.addtag_withtag("clip_end", end_text_id)
                 self.progress_canvas.addtag_withtag("clip_end", end_hitbox_id)
-                
+
                 # 绑定拖动事件
                 try:
                     # 为开始标记标签绑定事件
-                    self.progress_canvas.tag_bind("clip_start", "<Button-1>", self.on_clip_start_click)
-                    self.progress_canvas.tag_bind("clip_start", "<B1-Motion>", self.on_clip_start_drag)
-                    self.progress_canvas.tag_bind("clip_start", "<ButtonRelease-1>", self.on_clip_release)
-                    
+                    self.progress_canvas.tag_bind(
+                        "clip_start", "<Button-1>", self.on_clip_start_click
+                    )
+                    self.progress_canvas.tag_bind(
+                        "clip_start", "<B1-Motion>", self.on_clip_start_drag
+                    )
+                    self.progress_canvas.tag_bind(
+                        "clip_start", "<ButtonRelease-1>", self.on_clip_release
+                    )
+
                     # 为结束标记标签绑定事件
-                    self.progress_canvas.tag_bind("clip_end", "<Button-1>", self.on_clip_end_click)
-                    self.progress_canvas.tag_bind("clip_end", "<B1-Motion>", self.on_clip_end_drag)
-                    self.progress_canvas.tag_bind("clip_end", "<ButtonRelease-1>", self.on_clip_release)
-                    
+                    self.progress_canvas.tag_bind(
+                        "clip_end", "<Button-1>", self.on_clip_end_click
+                    )
+                    self.progress_canvas.tag_bind(
+                        "clip_end", "<B1-Motion>", self.on_clip_end_drag
+                    )
+                    self.progress_canvas.tag_bind(
+                        "clip_end", "<ButtonRelease-1>", self.on_clip_release
+                    )
+
                     # 为整个画布添加全局事件绑定，确保剪辑模式下的点击事件被正确处理
                     self.progress_canvas.bind("<Button-1>", self.on_canvas_click)
                     self.progress_canvas.bind("<B1-Motion>", self.on_canvas_drag)
-                    self.progress_canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
-                    
+                    self.progress_canvas.bind(
+                        "<ButtonRelease-1>", self.on_canvas_release
+                    )
+
                     print("剪辑标记事件绑定成功")
                 except Exception as e:
                     print(f"事件绑定失败: {e}")
-                
+
                 # 设置层级置顶（剪辑标记在所有元素之上，包括黄色标记和进度旋钮）
                 self.progress_canvas.tag_raise("clip_start")
                 self.progress_canvas.tag_raise("clip_end")
                 self.progress_canvas.tag_raise("yellow_marker")
-        
+
         # 最后绘制进度旋钮，确保它在所有元素之上
         knob_x = padding + progress_width
         knob_id = self.progress_canvas.create_oval(
-            knob_x - 8, progress_bar_y - 5, knob_x + 8, progress_bar_y + progress_bar_height + 5,
-            fill="#fff", outline="#ddd", width=2
+            knob_x - 8,
+            progress_bar_y - 5,
+            knob_x + 8,
+            progress_bar_y + progress_bar_height + 5,
+            fill="#fff",
+            outline="#ddd",
+            width=2,
         )
         # 为旋钮添加标签并设置为置顶
         self.progress_canvas.addtag_withtag("progress_knob", knob_id)
         self.progress_canvas.tag_raise("progress_knob")
-        
+
         # 同步更新缩略窗口的进度条
         self.update_mini_progress_bar()
-    
+
     def update_progress(self):
         while not self.stop_update:
             if self.recording:
                 # 录屏时：根据实际流逝时间计算，确保与视频时长一致
                 if not self.paused:
                     # 使用实际流逝时间计算（避免用固定fps导致的时间错误！）
-                    if hasattr(self, 'recording_start_time') and self.recording_start_time > 0:
+                    if (
+                        hasattr(self, "recording_start_time")
+                        and self.recording_start_time > 0
+                    ):
                         elapsed = time.time() - self.recording_start_time
                         # 减去暂停时间
-                        if hasattr(self, 'paused_time_total') and self.paused_time_total > 0:
+                        if (
+                            hasattr(self, "paused_time_total")
+                            and self.paused_time_total > 0
+                        ):
                             elapsed -= self.paused_time_total
                         self.current_time = max(0, elapsed)
-            elif self.video_duration > 0 and self.video_playing and not self.progress_bar_dragging:
+            elif (
+                self.video_duration > 0
+                and self.video_playing
+                and not self.progress_bar_dragging
+            ):
                 if not self.video_paused:
                     self.current_time += 0.1
                     if self.current_time >= self.video_duration:
@@ -3285,7 +4213,7 @@ class ScreenRecorder:
                     self.update_progress_bar()
                 self.update_time_label()
             time.sleep(0.1)
-    
+
     def update_time_label(self):
         current = self.format_time(self.current_time)
         if self.recording:
@@ -3295,34 +4223,39 @@ class ScreenRecorder:
         self.time_label.config(text=f"{current} / {total}")
         # 更新提示信息
         self.update_hints()
-    
+
     def mark_progress(self, source="main"):
-        
+
         # 如果正在录屏且处于暂停状态，不允许标记进度
         if self.recording and self.paused:
             # 先关闭可能存在的鼠标移入提示
-            if hasattr(self, 'mark_btn_tooltip') and self.mark_btn_tooltip:
+            if hasattr(self, "mark_btn_tooltip") and self.mark_btn_tooltip:
                 try:
                     self.mark_btn_tooltip.destroy()
                 except:
                     pass
             # 显示在缩略功能区下方（如果有）
-            if hasattr(self, 'mini_window') and self.mini_window:
-                self.show_notification("暂停状态下无法标记进度", is_weak=True, parent=self.mini_window)
+            if hasattr(self, "mini_window") and self.mini_window:
+                self.show_notification(
+                    "暂停状态下无法标记进度", is_weak=True, parent=self.mini_window
+                )
             else:
                 self.show_notification("暂停状态下无法标记进度", is_weak=True)
             return
-        
+
         # 如果没有在录屏且没有打开视频文件，提示用户
         if not self.recording and not self.video_file:
             self.show_notification("请先开始录屏或打开视频文件", is_weak=True)
             return
-        
+
         if self.recording or self.video_file:
             marker_time = self.current_time
             print(f"[调试] 添加标记: 时间={marker_time:.2f}")
             marker = {
-                "id": self.marker_count + 1, "name": str(self.marker_count + 1), "time": marker_time, "note": ""
+                "id": self.marker_count + 1,
+                "name": str(self.marker_count + 1),
+                "time": marker_time,
+                "note": "",
             }
             self.markers.append(marker)
             self.marker_count += 1
@@ -3331,21 +4264,25 @@ class ScreenRecorder:
                 print(f"[调试] 标记{i}: 时间={m['time']:.2f}")
             self.update_progress_bar()
             # 显示在缩略功能区下方（如果有）
-            if hasattr(self, 'mini_window') and self.mini_window:
-                self.show_notification("已完成标记", is_weak=True, parent=self.mini_window)
+            if hasattr(self, "mini_window") and self.mini_window:
+                self.show_notification(
+                    "已完成标记", is_weak=True, parent=self.mini_window
+                )
             else:
                 self.show_notification("已完成标记", is_weak=True)
             # 保存标记到文件
             self.save_markers_to_file()
             # 更新角标
-    
+
     def start_clip(self):
         if self.video_file and self.video_duration > 0:
             self.clip_mode = True
             self.clip_start = 0
             self.clip_end = self.video_duration
             # 切换按钮为取消截取
-            self.clip_btn.config(text="取消截取", command=self.cancel_clip, state=tk.NORMAL)
+            self.clip_btn.config(
+                text="取消截取", command=self.cancel_clip, state=tk.NORMAL
+            )
             self.finish_clip_btn.config(state=tk.NORMAL)
             self.update_progress_bar()
 
@@ -3356,7 +4293,7 @@ class ScreenRecorder:
         self.clip_btn.config(text="截取视频", command=self.start_clip, state=tk.NORMAL)
         self.finish_clip_btn.config(state=tk.DISABLED)
         self.update_progress_bar()
-    
+
     def finish_clip(self):
         """完成截取视频"""
         if self.clip_mode:
@@ -3365,34 +4302,36 @@ class ScreenRecorder:
                     "id": len(self.clips) + 1,
                     "start": self.clip_start,
                     "end": self.clip_end,
-                    "duration": self.clip_end - self.clip_start
+                    "duration": self.clip_end - self.clip_start,
                 }
                 self.clips.append(clip)
-                
+
                 # 保存剪辑到"截取视频"文件夹
                 if self.video_file:
                     try:
                         # 构建剪辑保存路径 - 为每个片段创建单独文件夹
                         # 检查片段是否有自定义名称
-                        if 'name' in clip and clip['name']:
-                            clip_folder_name = clip['name']
+                        if "name" in clip and clip["name"]:
+                            clip_folder_name = clip["name"]
                         else:
                             # 使用与原始代码一致的格式
                             clip_folder_name = f"recording_{self.current_session_dir.split(os.sep)[-1]}_片段_{clip['id']}"
-                        
+
                         # 保存文件夹名称到clip对象
-                        clip['folder_name'] = clip_folder_name
-                        
+                        clip["folder_name"] = clip_folder_name
+
                         # 创建片段文件夹 - 使用 self.current_session_dir 作为基础路径
-                        clip_folder = os.path.join(self.current_session_dir, "截取视频", clip_folder_name)
+                        clip_folder = os.path.join(
+                            self.current_session_dir, "截取视频", clip_folder_name
+                        )
                         if not os.path.exists(clip_folder):
                             os.makedirs(clip_folder)
-                        
+
                         # 片段视频文件路径
-                        clip_path = os.path.join(clip_folder, "clip.avi")
-                        
+                        clip_path = os.path.join(clip_folder, "clip.mp4")
+
                         print(f"[DEBUG] 保存片段到: {clip_path}")
-                        
+
                         # 获取视频信息并使用FFmpeg快速裁剪
                         cap = cv2.VideoCapture(self.video_file)
                         if cap.isOpened():
@@ -3400,88 +4339,126 @@ class ScreenRecorder:
                             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                             cap.release()
-                            
+
                             # 计算开始时间和持续时间
                             start_time = clip["start"]
                             duration = clip["end"] - clip["start"]
-                            
+
                             clip_saved = False
                             # 使用FFmpeg快速裁剪（速度比cv2逐帧处理快10-50倍）
                             if IMAGEIO_FFMPEG_AVAILABLE:
                                 try:
                                     ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-                                    
+
                                     # FFmpeg命令：-ss指定开始时间，-t指定持续时间，-c copy表示直接复制流不重新编码
                                     cmd = [
                                         ffmpeg_exe,
-                                        '-y',  # 覆盖输出文件
-                                        '-ss', str(start_time),
-                                        '-i', self.video_file,
-                                        '-t', str(duration),
-                                        '-c', 'copy',  # 直接复制，不重新编码，速度最快
-                                        '-avoid_negative_ts', 'make_zero',
-                                        clip_path
+                                        "-y",  # 覆盖输出文件
+                                        "-ss",
+                                        str(start_time),
+                                        "-i",
+                                        self.video_file,
+                                        "-t",
+                                        str(duration),
+                                        "-c",
+                                        "copy",  # 直接复制，不重新编码，速度最快
+                                        "-avoid_negative_ts",
+                                        "make_zero",
+                                        clip_path,
                                     ]
-                                    
+
                                     print(f"[DEBUG] 执行FFmpeg命令: {' '.join(cmd)}")
-                                    
-                                    result = subprocess.run(cmd, capture_output=True, text=True)
+
+                                    result = subprocess.run(
+                                        cmd, capture_output=True, text=True
+                                    )
                                     if result.returncode != 0:
-                                        print(f"FFmpeg copy模式失败，错误信息: {result.stderr}")
+                                        print(
+                                            f"FFmpeg copy模式失败，错误信息: {result.stderr}"
+                                        )
                                         # 如果copy模式失败，尝试重新编码模式
                                         cmd_reencode = [
                                             ffmpeg_exe,
-                                            '-y',
-                                            '-ss', str(start_time),
-                                            '-i', self.video_file,
-                                            '-t', str(duration),
-                                            '-c:v', 'libx264',  # 使用H.264编码
-                                            '-preset', 'ultrafast',  # 最快预设
-                                            '-c:a', 'aac',
-                                            clip_path
+                                            "-y",
+                                            "-ss",
+                                            str(start_time),
+                                            "-i",
+                                            self.video_file,
+                                            "-t",
+                                            str(duration),
+                                            "-c:v",
+                                            "libx264",  # 使用H.264编码
+                                            "-preset",
+                                            "ultrafast",  # 最快预设
+                                            "-c:a",
+                                            "aac",
+                                            clip_path,
                                         ]
-                                        result = subprocess.run(cmd_reencode, capture_output=True, text=True)
+                                        result = subprocess.run(
+                                            cmd_reencode, capture_output=True, text=True
+                                        )
                                         if result.returncode != 0:
-                                            print(f"FFmpeg reencode模式也失败: {result.stderr}")
-                                    
+                                            print(
+                                                f"FFmpeg reencode模式也失败: {result.stderr}"
+                                            )
+
                                     if result.returncode == 0:
                                         print(f"剪辑已保存到: {clip_path}")
                                         clip_saved = True
                                     else:
                                         print("FFmpeg处理失败，尝试使用cv2方式")
-                                        self.extract_clip_with_cv2(clip, clip_path, fps, width, height)
+                                        self.extract_clip_with_cv2(
+                                            clip, clip_path, fps, width, height
+                                        )
                                         if os.path.exists(clip_path):
                                             clip_saved = True
                                 except Exception as ffmpeg_err:
-                                    print(f"FFmpeg裁剪失败，回退到cv2方式: {ffmpeg_err}")
-                                    self.extract_clip_with_cv2(clip, clip_path, fps, width, height)
+                                    print(
+                                        f"FFmpeg裁剪失败，回退到cv2方式: {ffmpeg_err}"
+                                    )
+                                    self.extract_clip_with_cv2(
+                                        clip, clip_path, fps, width, height
+                                    )
                                     if os.path.exists(clip_path):
                                         clip_saved = True
                             else:
                                 # 没有FFmpeg，使用cv2方式
-                                self.extract_clip_with_cv2(clip, clip_path, fps, width, height)
+                                self.extract_clip_with_cv2(
+                                    clip, clip_path, fps, width, height
+                                )
                                 if os.path.exists(clip_path):
                                     clip_saved = True
-                            
+
                             # 只有在视频片段成功保存后才创建签名文件
                             if clip_saved:
                                 print(f"[DEBUG] 片段保存成功！路径: {clip_path}")
                                 print(f"[DEBUG] 文件夹名称: {clip_folder_name}")
-                                print(f"[DEBUG] 文件是否存在: {os.path.exists(clip_path)}")
-                                
+                                print(
+                                    f"[DEBUG] 文件是否存在: {os.path.exists(clip_path)}"
+                                )
+
                                 # 确保 self.clips 中的 clip 对象也有 folder_name
                                 if clip in self.clips:
                                     clip["folder_name"] = clip_folder_name
-                                
+
                                 # 保存片段信息到video_clips字典
                                 if self.video_file not in self.video_clips:
                                     self.video_clips[self.video_file] = []
-                                existing_clip = next((c for c in self.video_clips[self.video_file] if c['id'] == clip['id']), None)
+                                existing_clip = next(
+                                    (
+                                        c
+                                        for c in self.video_clips[self.video_file]
+                                        if c["id"] == clip["id"]
+                                    ),
+                                    None,
+                                )
                                 if existing_clip:
                                     existing_clip.update(clip)
                                 else:
-                                    self.video_clips[self.video_file].append(clip.copy())
-                                
+                                    self.video_clips[self.video_file].append(
+                                        clip.copy()
+                                    )
+
                                 # 创建片段工具签名文件
                                 self.create_clip_signature(clip_folder, clip)
                             else:
@@ -3493,20 +4470,26 @@ class ScreenRecorder:
                     except Exception as e:
                         print(f"保存剪辑时出错: {e}")
                         import traceback
+
                         traceback.print_exc()
-                
+
                 self.update_clips()
-                self.show_notification(f"已完成截取，片段时长：{self.format_time(clip['duration'])}", is_weak=True)
+                self.show_notification(
+                    f"已完成截取，片段时长：{self.format_time(clip['duration'])}",
+                    is_weak=True,
+                )
             self.clip_mode = False
             # 恢复按钮为截取视频
-            self.clip_btn.config(text="截取视频", command=self.start_clip, state=tk.NORMAL)
+            self.clip_btn.config(
+                text="截取视频", command=self.start_clip, state=tk.NORMAL
+            )
             self.finish_clip_btn.config(state=tk.DISABLED)
             self.update_progress_bar()
-    
+
     def on_clip_start_click(self, event):
         print(f"开始标记点击事件触发，坐标: ({event.x}, {event.y})")
         self.dragging_clip_start = True
-    
+
     def on_clip_start_drag(self, event):
         if self.dragging_clip_start and self.clip_mode and self.video_duration > 0:
             width = self.progress_canvas.winfo_width()
@@ -3527,11 +4510,11 @@ class ScreenRecorder:
                     self.update_progress_bar()
                     # 更新提示信息
                     self.update_hints()
-    
+
     def on_clip_end_click(self, event):
         print(f"结束标记点击事件触发，坐标: ({event.x}, {event.y})")
         self.dragging_clip_end = True
-    
+
     def on_clip_end_drag(self, event):
         if self.dragging_clip_end and self.clip_mode and self.video_duration > 0:
             width = self.progress_canvas.winfo_width()
@@ -3552,33 +4535,33 @@ class ScreenRecorder:
                     self.update_progress_bar()
                     # 更新提示信息
                     self.update_hints()
-    
+
     def on_clip_release(self, event):
         print(f"释放事件触发，坐标: ({event.x}, {event.y})")
         self.dragging_clip_start = False
         self.dragging_clip_end = False
-    
+
     def on_canvas_click(self, event):
         if self.clip_mode and self.video_duration > 0:
             width = self.progress_canvas.winfo_width()
             if width > 0:
                 # 计算点击位置对应的时间
                 click_time = (event.x / width) * self.video_duration
-                
+
                 # 检查点击位置是否靠近开始标记
                 start_pos = (self.clip_start / self.video_duration) * width
                 end_pos = (self.clip_end / self.video_duration) * width
-                
+
                 # 定义点击区域的阈值
                 threshold = 30
-                
+
                 if abs(event.x - start_pos) <= threshold:
                     print(f"点击了开始标记附近，坐标: ({event.x}, {event.y})")
                     self.dragging_clip_start = True
                 elif abs(event.x - end_pos) <= threshold:
                     print(f"点击了结束标记附近，坐标: ({event.x}, {event.y})")
                     self.dragging_clip_end = True
-    
+
     def on_canvas_drag(self, event):
         if self.clip_mode and self.video_duration > 0:
             width = self.progress_canvas.winfo_width()
@@ -3593,19 +4576,19 @@ class ScreenRecorder:
                 else:
                     new_pos = event.x
                 drag_time = ((new_pos - padding) / usable_width) * self.video_duration
-                
+
                 if self.dragging_clip_start and drag_time < self.clip_end:
                     self.clip_start = drag_time
                     self.update_progress_bar()
                 elif self.dragging_clip_end and drag_time > self.clip_start:
                     self.clip_end = drag_time
                     self.update_progress_bar()
-    
+
     def on_canvas_release(self, event):
         if self.clip_mode:
             self.dragging_clip_start = False
             self.dragging_clip_end = False
-    
+
     def jump_to_marker(self, index):
         if 0 <= index < len(self.markers):
             self.current_time = self.markers[index]["time"]
@@ -3613,7 +4596,7 @@ class ScreenRecorder:
                 self.update_progress_bar()
                 self.update_time_label()
             self.current_marker_index = index
-    
+
     def jump_to_marker_and_play(self, index):
         if self.video_playing:
             self.pause_video()
@@ -3622,34 +4605,36 @@ class ScreenRecorder:
         self.jump_to_marker(index)
         if self.video_file:
             self.play_video()
-    
+
     def update_clips(self):
         print(f"\n=== update_clips 被调用 ===")
         print(f"self.clips 长度: {len(self.clips)}")
         print(f"self.clips 内容: {self.clips}")
         print(f"clip_listbox 是否存在: {hasattr(self, 'clip_listbox')}")
-        
+
         self.clip_listbox.delete(0, tk.END)
-        
+
         # 获取当前视频的文件名（不含路径和后缀）
         video_filename = ""
         if self.video_file:
             basename = os.path.basename(self.video_file)
             video_filename = os.path.splitext(basename)[0] + "_"
-        
+
         # 先收集所有片段信息，找出最长的名称
         clip_items = []
         for clip in self.clips:
             start = self.format_time(clip["start"])
             end = self.format_time(clip["end"])
-            
+
             # 获取截取时入点和出点间的标记进度的名称
             clip_start = clip["start"]
             clip_end = clip["end"]
-            
+
             # 查找在入点和出点之间的标记
-            markers_in_range = [m for m in self.markers if clip_start <= m["time"] <= clip_end]
-            
+            markers_in_range = [
+                m for m in self.markers if clip_start <= m["time"] <= clip_end
+            ]
+
             if len(markers_in_range) >= 1:
                 # 如果有>=1个标记，取靠左（时间最小）的标记名称
                 left_marker = min(markers_in_range, key=lambda m: m["time"])
@@ -3657,9 +4642,9 @@ class ScreenRecorder:
             else:
                 # 如果有<1个标记（即0个），填充为空
                 marker_name = ""
-            
+
             # 使用自定义名称（如果存在），否则使用默认格式
-            if 'name' in clip and clip['name']:
+            if "name" in clip and clip["name"]:
                 # 格式：{自定义名称}: {开始时间} - {结束时间} ({标记名称})
                 item = f"{clip['name']}: {start} - {end} ({marker_name})"
             else:
@@ -3668,9 +4653,9 @@ class ScreenRecorder:
             clip_items.append(item)
             print(f"插入片段: {item}")
             self.clip_listbox.insert(tk.END, item)
-        
+
         print(f"插入完成后 listbox size: {self.clip_listbox.size()}")
-        
+
         # 计算最长的片段名称长度，并设置列表框宽度
         if clip_items:
             max_length = max(len(item) for item in clip_items)
@@ -3679,55 +4664,63 @@ class ScreenRecorder:
         else:
             # 默认宽度
             self.clip_listbox.configure(width=35)
-        
+
         # 默认选中第一条数据
         if self.clips:
             self.clip_listbox.selection_set(0)
         else:
             self.clip_listbox.selection_clear(0, tk.END)
-    
+
     def play_selected_clip(self):
         selected = self.clip_listbox.curselection()
         if selected:
             clip = self.clips[selected[0]]
             # 注释掉原来的内部播放器代码
             # self.play_clip(clip)
-            
+
             # 改为打开系统播放器
             import os
-            clip_folder = clip.get('folder_name', f"recording_{self.current_session_dir.split(os.sep)[-1]}_片段_{clip['id']}")
-            clip_path = os.path.join(self.current_session_dir, "截取视频", clip_folder, "clip.avi")
-            
+
+            clip_folder = clip.get(
+                "folder_name",
+                f"recording_{self.current_session_dir.split(os.sep)[-1]}_片段_{clip['id']}",
+            )
+            clip_path = os.path.join(
+                self.current_session_dir, "截取视频", clip_folder, "clip.mp4"
+            )
+
             print(f"[DEBUG] clip_file = {clip_path}")
             print(f"[DEBUG] clip_file exists: {os.path.exists(clip_path)}")
-            
+
             if os.path.exists(clip_path):
                 print(f"打开系统播放器播放: {clip_path}")
                 os.startfile(clip_path)
             else:
                 self.show_notification("片段文件不存在", is_weak=True)
                 print(f"片段文件不存在: {clip_path}")
-    
+
     def play_clip(self, clip):
         if self.video_file:
             print("\n=== 开始播放剪辑 ===")
-            print(f"剪辑信息: 开始时间={clip['start']:.2f}秒, 结束时间={clip['end']:.2f}秒, 时长={clip['duration']:.2f}秒")
-            
+            print(
+                f"剪辑信息: 开始时间={clip['start']:.2f}秒, 结束时间={clip['end']:.2f}秒, 时长={clip['duration']:.2f}秒"
+            )
+
             # 检查剪辑时间范围是否有效
-            if clip['start'] >= clip['end']:
+            if clip["start"] >= clip["end"]:
                 print("[错误] 剪辑时间范围无效: 开始时间 >= 结束时间")
                 messagebox.showerror("错误", "剪辑时间范围无效")
                 return
-            
+
             # 检查视频文件是否存在
             if not os.path.exists(self.video_file):
                 print(f"[错误] 视频文件不存在: {self.video_file}")
                 messagebox.showerror("错误", "视频文件不存在")
                 return
-            
+
             print(f"视频文件: {self.video_file}")
             print(f"文件大小: {os.path.getsize(self.video_file):,} 字节")
-            
+
             # 停止当前可能正在播放的视频
             print(f"当前 stop_video 值: {self.stop_video}")
             self.stop_video = True
@@ -3741,11 +4734,13 @@ class ScreenRecorder:
             print(f"重置 stop_video 为 False")
             # 启动剪辑播放线程
             print("启动剪辑播放线程...")
-            self.video_thread = threading.Thread(target=self.play_clip_thread, args=(clip,))
+            self.video_thread = threading.Thread(
+                target=self.play_clip_thread, args=(clip,)
+            )
             self.video_thread.daemon = True
             self.video_thread.start()
             print("剪辑播放线程已启动")
-    
+
     def play_clip_thread(self, clip):
         print("\n=== 剪辑播放线程开始 ===")
         print(f"线程ID: {threading.get_ident()}")
@@ -3754,21 +4749,21 @@ class ScreenRecorder:
             print("[错误] 无法打开视频文件")
             messagebox.showerror("错误", "无法打开视频文件")
             return
-        
+
         # 获取视频信息
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         print(f"视频信息: FPS={fps:.1f}, 总帧数={total_frames}")
-        
+
         start_frame = int(clip["start"] * fps)
         end_frame = int(clip["end"] * fps)
         print(f"剪辑范围: 开始帧={start_frame}, 结束帧={end_frame}")
-        
+
         # 设置起始帧
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
         current_frame = start_frame
         print(f"当前帧设置为: {current_frame}")
-        
+
         # 计算弹窗大小为当前工具窗口的70%
         root_width = self.root.winfo_width()
         root_height = self.root.winfo_height()
@@ -3779,21 +4774,21 @@ class ScreenRecorder:
         window_width = int(root_width * 0.7)
         window_height = int(root_height * 0.7)
         print(f"弹窗大小: {window_width}x{window_height}")
-        
+
         # 创建播放窗口
         clip_window = tk.Toplevel(self.root)
         clip_window.title(f"播放片段 {clip['id']}")
         clip_window.geometry(f"{window_width}x{window_height}")
         clip_window.resizable(True, True)
-        
+
         # 创建画布
         clip_canvas = tk.Canvas(clip_window, bg="black")
         clip_canvas.pack(fill=tk.BOTH, expand=True)
-        
+
         # 创建控制按钮框架
         control_frame = tk.Frame(clip_window, bg="#333")
         control_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=5)
-        
+
         # 播放按钮
         def play_video():
             nonlocal is_playing, current_frame, frame_count
@@ -3810,10 +4805,14 @@ class ScreenRecorder:
                 time_var.set(f"00:00 / {format_time(total_clip_frames / fps)}")
                 width = progress_canvas.winfo_width()
                 if width > 0:
-                    progress_canvas.delete('all')
-                    progress_canvas.create_rectangle(0, 0, width, 20, fill="#555", outline="")
-                    progress_canvas.create_oval(-6, 2, 6, 18, fill="#fff", outline="#ddd", width=2)
-        
+                    progress_canvas.delete("all")
+                    progress_canvas.create_rectangle(
+                        0, 0, width, 20, fill="#555", outline=""
+                    )
+                    progress_canvas.create_oval(
+                        -6, 2, 6, 18, fill="#fff", outline="#ddd", width=2
+                    )
+
         # 暂停按钮
         def pause_video():
             nonlocal is_playing
@@ -3821,43 +4820,49 @@ class ScreenRecorder:
                 is_playing = False
                 play_btn.config(state=tk.NORMAL)
                 pause_btn.config(state=tk.DISABLED)
-        
+
         is_playing = True
-        play_btn = tk.Button(control_frame, text="播放", command=play_video, padx=10, pady=5)
+        play_btn = tk.Button(
+            control_frame, text="播放", command=play_video, padx=10, pady=5
+        )
         play_btn.pack(side=tk.LEFT, padx=5)
         play_btn.config(state=tk.DISABLED)  # 初始状态下播放中，禁用播放按钮
-        
-        pause_btn = tk.Button(control_frame, text="暂停", command=pause_video, padx=10, pady=5)
+
+        pause_btn = tk.Button(
+            control_frame, text="暂停", command=pause_video, padx=10, pady=5
+        )
         pause_btn.pack(side=tk.LEFT, padx=5)
         pause_btn.config(state=tk.NORMAL)  # 初始状态下播放中，启用暂停按钮
-        
+
         # 关闭按钮（隐藏）
         def close_window():
             nonlocal stop_playback
             stop_playback = True
             cap.release()
             clip_window.destroy()
-        
+
         # 隐藏关闭按钮，通过窗口关闭按钮关闭
         clip_window.protocol("WM_DELETE_WINDOW", close_window)
-        
+
         # 时间轴和进度条（与主页面保持一致）
         time_frame = tk.Frame(control_frame, bg="#333")
         time_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
-        
+
         # 时间标签
         time_var = tk.StringVar()
         time_var.set("00:00 / 00:00")
         time_label = tk.Label(time_frame, textvariable=time_var, fg="white", bg="#333")
         time_label.pack(side=tk.RIGHT, padx=10)
-        
+
         # 进度条画布
-        progress_canvas = tk.Canvas(time_frame, height=20, bg="#333", highlightthickness=0)
+        progress_canvas = tk.Canvas(
+            time_frame, height=20, bg="#333", highlightthickness=0
+        )
         progress_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
-        
+
         # 进度条拖动状态
         progress_bar_dragging = False
-        
+
         # 进度条点击事件
         def on_progress_click(event):
             nonlocal progress_bar_dragging, current_frame
@@ -3873,7 +4878,7 @@ class ScreenRecorder:
                 current_frame = new_frame
                 # 更新进度条显示
                 update_progress_display(position)
-        
+
         # 进度条拖动事件
         def on_progress_drag(event):
             nonlocal progress_bar_dragging, current_frame
@@ -3889,47 +4894,55 @@ class ScreenRecorder:
                     current_frame = new_frame
                     # 更新进度条显示
                     update_progress_display(position)
-        
+
         # 更新进度条显示函数
         def update_progress_display(position):
             width = progress_canvas.winfo_width()
             if width > 0:
-                progress_canvas.delete('all')
+                progress_canvas.delete("all")
                 # 绘制背景
-                progress_canvas.create_rectangle(0, 0, width, 20, fill="#555", outline="")
+                progress_canvas.create_rectangle(
+                    0, 0, width, 20, fill="#555", outline=""
+                )
                 # 绘制进度
                 progress_x = int(width * position)
-                progress_canvas.create_rectangle(0, 0, progress_x, 20, fill="#4caf50", outline="")
+                progress_canvas.create_rectangle(
+                    0, 0, progress_x, 20, fill="#4caf50", outline=""
+                )
                 # 绘制旋钮
                 knob_x = int(width * position)
-                progress_canvas.create_oval(knob_x - 8, 2, knob_x + 8, 18, fill="#fff", outline="#ddd", width=2)
+                progress_canvas.create_oval(
+                    knob_x - 8, 2, knob_x + 8, 18, fill="#fff", outline="#ddd", width=2
+                )
                 # 更新时间标签
                 current_time_seconds = (position * total_clip_frames) / fps
-                time_var.set(f"{format_time(current_time_seconds)} / {format_time(total_clip_frames / fps)}")
-        
+                time_var.set(
+                    f"{format_time(current_time_seconds)} / {format_time(total_clip_frames / fps)}"
+                )
+
         # 进度条释放事件
         def on_progress_release(event):
             nonlocal progress_bar_dragging
             progress_bar_dragging = False
-        
+
         # 绑定进度条事件
         progress_canvas.bind("<Button-1>", on_progress_click)
         progress_canvas.bind("<B1-Motion>", on_progress_drag)
         progress_canvas.bind("<ButtonRelease-1>", on_progress_release)
-        
+
         # 窗口关闭事件
         clip_window.protocol("WM_DELETE_WINDOW", close_window)
         print("播放窗口已创建")
-        
+
         # 确保 stop_video 为 False
         self.stop_video = False
         stop_playback = False
         print(f"线程内设置 stop_video 为: {self.stop_video}")
-        
+
         # 计算总帧数，用于调试
         total_clip_frames = end_frame - start_frame + 1
         print(f"剪辑总帧数: {total_clip_frames}")
-        
+
         # 格式化时间函数（支持小时）
         def format_time(seconds):
             hours = int(seconds // 3600)
@@ -3939,11 +4952,15 @@ class ScreenRecorder:
                 return f"{hours:02d}:{mins:02d}:{secs:02d}"
             else:
                 return f"{mins:02d}:{secs:02d}"
-        
+
         # 检查循环条件
-        print(f"循环前检查: current_frame={current_frame}, end_frame={end_frame}, stop_video={self.stop_video}")
-        print(f"循环条件: {current_frame <= end_frame} and {not self.stop_video} and {not stop_playback} = {current_frame <= end_frame and not self.stop_video and not stop_playback}")
-        
+        print(
+            f"循环前检查: current_frame={current_frame}, end_frame={end_frame}, stop_video={self.stop_video}"
+        )
+        print(
+            f"循环条件: {current_frame <= end_frame} and {not self.stop_video} and {not stop_playback} = {current_frame <= end_frame and not self.stop_video and not stop_playback}"
+        )
+
         frame_count = 0
         # 主循环：保持线程活跃，支持重复播放
         while not self.stop_video and not stop_playback:
@@ -3962,14 +4979,18 @@ class ScreenRecorder:
                     time_var.set(f"00:00 / {format_time(total_clip_frames / fps)}")
                     width = progress_canvas.winfo_width()
                     if width > 0:
-                        progress_canvas.delete('all')
-                        progress_canvas.create_rectangle(0, 0, width, 20, fill="#555", outline="")
-                        progress_canvas.create_oval(-6, 2, 6, 18, fill="#fff", outline="#ddd", width=2)
+                        progress_canvas.delete("all")
+                        progress_canvas.create_rectangle(
+                            0, 0, width, 20, fill="#555", outline=""
+                        )
+                        progress_canvas.create_oval(
+                            -6, 2, 6, 18, fill="#fff", outline="#ddd", width=2
+                        )
                     # 跳过本次循环，等待用户点击播放
                     clip_window.update()
                     time.sleep(0.1)
                     continue
-                
+
                 # 检查是否到达结束帧
                 if current_frame == end_frame:
                     # 播放完最后一帧后停止
@@ -3984,21 +5005,27 @@ class ScreenRecorder:
                     time_var.set(f"00:00 / {format_time(total_clip_frames / fps)}")
                     width = progress_canvas.winfo_width()
                     if width > 0:
-                        progress_canvas.delete('all')
-                        progress_canvas.create_rectangle(0, 0, width, 20, fill="#555", outline="")
-                        progress_canvas.create_oval(-6, 2, 6, 18, fill="#fff", outline="#ddd", width=2)
+                        progress_canvas.delete("all")
+                        progress_canvas.create_rectangle(
+                            0, 0, width, 20, fill="#555", outline=""
+                        )
+                        progress_canvas.create_oval(
+                            -6, 2, 6, 18, fill="#fff", outline="#ddd", width=2
+                        )
                     # 跳过本次循环，等待用户点击播放
                     clip_window.update()
                     time.sleep(0.1)
                     continue
-                
+
                 print(f"\n循环开始: 第{frame_count}次迭代")
-                print(f"当前状态: current_frame={current_frame}, end_frame={end_frame}, stop_video={self.stop_video}, stop_playback={stop_playback}")
-                
+                print(
+                    f"当前状态: current_frame={current_frame}, end_frame={end_frame}, stop_video={self.stop_video}, stop_playback={stop_playback}"
+                )
+
                 # 读取帧
                 ret, frame = cap.read()
                 print(f"读取帧: ret={ret}")
-                
+
                 if not ret:
                     print(f"[警告] 读取帧失败，当前帧: {current_frame}")
                     # 停止播放
@@ -4013,14 +5040,18 @@ class ScreenRecorder:
                     time_var.set(f"00:00 / {format_time(total_clip_frames / fps)}")
                     width = progress_canvas.winfo_width()
                     if width > 0:
-                        progress_canvas.delete('all')
-                        progress_canvas.create_rectangle(0, 0, width, 20, fill="#555", outline="")
-                        progress_canvas.create_oval(-6, 2, 6, 18, fill="#fff", outline="#ddd", width=2)
+                        progress_canvas.delete("all")
+                        progress_canvas.create_rectangle(
+                            0, 0, width, 20, fill="#555", outline=""
+                        )
+                        progress_canvas.create_oval(
+                            -6, 2, 6, 18, fill="#fff", outline="#ddd", width=2
+                        )
                     # 跳过本次循环，等待用户点击播放
                     clip_window.update()
                     time.sleep(0.1)
                     continue
-                
+
                 # 转换颜色并调整大小以适应窗口
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 # 获取画布大小
@@ -4033,56 +5064,72 @@ class ScreenRecorder:
                     imgtk = ImageTk.PhotoImage(image=img)
                     clip_canvas.create_image(0, 0, anchor=tk.NW, image=imgtk)
                     clip_canvas.imgtk = imgtk
-                
+
                 clip_window.update()
                 print("帧已显示")
-                
+
                 # 延时
-                time.sleep(1/fps)  # 使用视频的实际帧率
+                time.sleep(1 / fps)  # 使用视频的实际帧率
                 current_frame += 1
                 frame_count += 1
-                
+
                 # 计算当前时间和总时间
                 current_time = (current_frame - start_frame) / fps
                 total_time = total_clip_frames / fps
-                
+
                 # 更新时间标签
                 time_var.set(f"{format_time(current_time)} / {format_time(total_time)}")
-                
+
                 # 更新进度条
                 width = progress_canvas.winfo_width()
                 if width > 0:
                     progress = (current_frame - start_frame) / total_clip_frames
                     progress_width = int(width * progress)
                     # 清除旧的进度条
-                    progress_canvas.delete('all')
+                    progress_canvas.delete("all")
                     # 绘制背景
-                    progress_canvas.create_rectangle(0, 0, width, 20, fill="#555", outline="")
+                    progress_canvas.create_rectangle(
+                        0, 0, width, 20, fill="#555", outline=""
+                    )
                     # 绘制进度
-                    progress_canvas.create_rectangle(0, 0, progress_width, 20, fill="#4CAF50", outline="")
+                    progress_canvas.create_rectangle(
+                        0, 0, progress_width, 20, fill="#4CAF50", outline=""
+                    )
                     # 绘制旋钮
                     knob_x = progress_width
-                    progress_canvas.create_oval(knob_x - 6, 2, knob_x + 6, 18, fill="#fff", outline="#ddd", width=2)
-                
+                    progress_canvas.create_oval(
+                        knob_x - 6,
+                        2,
+                        knob_x + 6,
+                        18,
+                        fill="#fff",
+                        outline="#ddd",
+                        width=2,
+                    )
+
                 # 每5帧打印一次进度
                 if frame_count % 5 == 0:
-                    print(f"播放进度: 帧 {current_frame}/{end_frame} ({(current_frame-start_frame)/total_clip_frames*100:.1f}%)")
+                    print(
+                        f"播放进度: 帧 {current_frame}/{end_frame} ({(current_frame-start_frame)/total_clip_frames*100:.1f}%)"
+                    )
             else:
                 # 暂停状态或等待播放
                 clip_window.update()
                 time.sleep(0.1)
-        
+
         print(f"\n=== 循环结束 ===")
-        print(f"最终状态: current_frame={current_frame}, end_frame={end_frame}, stop_video={self.stop_video}, stop_playback={stop_playback}")
+        print(
+            f"最终状态: current_frame={current_frame}, end_frame={end_frame}, stop_video={self.stop_video}, stop_playback={stop_playback}"
+        )
         print(f"播放了 {frame_count} 帧")
-        
+
         # 清理
         print("释放视频捕获")
         cap.release()
         print("销毁播放窗口")
         clip_window.destroy()
         print("剪辑播放线程结束")
-    
+
     def on_clip_window_close(self, window, cap):
         """旧的窗口关闭处理函数（保留以确保兼容性）"""
         self.stop_video = True
@@ -4094,7 +5141,7 @@ class ScreenRecorder:
             window.destroy()
         except:
             pass
-    
+
     def delete_selected_clip(self):
         selected = self.clip_listbox.curselection()
         if selected:
@@ -4104,22 +5151,24 @@ class ScreenRecorder:
                 # 从列表中删除片段
                 clip_index = selected[0]
                 clip = self.clips[clip_index]
-                clip_id = clip.get('id', clip_index + 1)
-                
+                clip_id = clip.get("id", clip_index + 1)
+
                 # 删除对应的文件
                 if self.current_session_dir:
                     clip_dir = os.path.join(self.current_session_dir, self.clip_dir)
                     # 构建文件路径
-                    if 'name' in clip and clip['name']:
-                        clip_file = os.path.join(clip_dir, f"{clip['name']}.avi")
+                    if "name" in clip and clip["name"]:
+                        clip_file = os.path.join(clip_dir, f"{clip['name']}.mp4")
                     else:
                         # 获取当前视频的文件名（不含路径和后缀）
                         video_filename = ""
                         if self.video_file:
                             basename = os.path.basename(self.video_file)
                             video_filename = os.path.splitext(basename)[0] + "_"
-                        clip_file = os.path.join(clip_dir, f"{video_filename}片段 {clip_id}.avi")
-                    
+                        clip_file = os.path.join(
+                            clip_dir, f"{video_filename}片段 {clip_id}.mp4"
+                        )
+
                     # 删除文件
                     if os.path.exists(clip_file):
                         try:
@@ -4127,14 +5176,14 @@ class ScreenRecorder:
                             print(f"删除片段文件: {clip_file}")
                         except Exception as e:
                             print(f"删除文件失败: {e}")
-                
+
                 # 从内存中删除片段
                 self.clips.pop(clip_index)
                 # 更新片段列表
                 self.update_clips()
                 # 显示删除成功通知
                 self.show_notification("片段删除成功", is_weak=True)
-    
+
     def play_video(self):
         # 检查是否有未完成的合并任务（从文件恢复）
         state = self._check_and_resume_merge()
@@ -4142,14 +5191,14 @@ class ScreenRecorder:
             # 发现未完成的任务，需要恢复合并
             self.show_notification("发现未完成的视频处理，正在恢复...", is_weak=False)
             print("[播放] 发现未完成的合并任务，正在恢复...")
-            
+
             # 在后台线程恢复合并任务
             def resume_merge_thread():
                 success = self._resume_merge_from_state(state)
                 self.root.after(0, lambda: self._on_resume_complete(success))
-            
+
             threading.Thread(target=resume_merge_thread, daemon=True).start()
-            
+
             # 简单等待合并完成（避免复杂状态管理）
             self.show_notification("正在处理视频，请稍候...", is_weak=False)
             # 给一点时间让线程开始
@@ -4160,7 +5209,7 @@ class ScreenRecorder:
             while not os.path.exists(state["video_file"]) and wait_count < max_wait:
                 time.sleep(0.5)
                 wait_count += 1
-            
+
             if os.path.exists(state["video_file"]):
                 self.video_file = state["video_file"]
                 self.current_session_dir = state["session_dir"]
@@ -4170,28 +5219,28 @@ class ScreenRecorder:
                 self.show_notification("视频处理失败", is_weak=True)
                 print("[播放] 合并失败")
                 return
-        
+
         # 检查是否正在合并中
         if self.merging_in_progress:
             self.show_notification("正在等待视频处理完成...", is_weak=False)
             print("[播放] 等待合并完成...")
             while self.merging_in_progress:
                 time.sleep(0.1)
-            
+
             self.show_notification("视频处理完成，开始播放", is_weak=True)
             print("[播放] 合并已完成，开始播放")
-        
+
         # 确保视频生成提示已隐藏
-        if hasattr(self, 'merging_window') and self.merging_window:
+        if hasattr(self, "merging_window") and self.merging_window:
             try:
                 self.merging_window.destroy()
             except:
                 pass
             self.merging_window = None
-        
+
         # 确保播放按钮已启用
         self.play_btn.config(state=tk.NORMAL)
-        
+
         if self.video_file:
             # 如果处于暂停状态，只取消暂停，继续播放（不从头开始）
             if self.video_playing and self.video_paused:
@@ -4212,29 +5261,30 @@ class ScreenRecorder:
                 self.video_thread = threading.Thread(target=self.play_video_thread)
                 self.video_thread.daemon = True
                 self.video_thread.start()
-    
+
     def play_video_thread(self):
         print("\n=== 主页面视频播放线程开始 ===")
-        
-        # 创建临时音频文件路径
-        temp_audio_file = self.video_file.replace('.avi', '_temp_audio.wav')
+
+        temp_audio_file = os.path.splitext(self.video_file)[0] + "_temp_audio.wav"
         audio_available = False
         pygame = None
-        
-        # 使用FFmpeg提取音频（保持原始采样率）
+
         try:
             import subprocess
             import imageio_ffmpeg
-            
+
             ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
             cmd = [
                 ffmpeg_exe,
-                '-y',
-                '-i', self.video_file,
-                '-vn',  # 只提取音频
-                '-acodec', 'pcm_s16le',
-                '-ac', '2',
-                temp_audio_file
+                "-y",
+                "-i",
+                self.video_file,
+                "-vn",
+                "-acodec",
+                "pcm_s16le",
+                "-ac",
+                "2",
+                temp_audio_file,
             ]
 
             result = subprocess.run(cmd, capture_output=True, text=True)
@@ -4242,22 +5292,19 @@ class ScreenRecorder:
             if result.returncode == 0:
                 print(f"[音频] 成功提取音频到: {temp_audio_file}")
 
-                # 初始化pygame音频（修复无控制台模式下的问题）
                 try:
-                    # 关键：在导入pygame之前设置虚拟驱动
-                    os.environ['SDL_VIDEODRIVER'] = 'dummy'
-                    
+                    os.environ["SDL_VIDEODRIVER"] = "dummy"
+
                     import pygame as pygame_module
+
                     pygame = pygame_module
-                    
-                    # 初始化pygame（先视频模块，创建隐藏窗口）
+
                     pygame.init()
                     screen = pygame.display.set_mode((1, 1), pygame.NOFRAME)
-                    
-                    # 初始化音频
+
                     if not pygame.mixer.get_init():
                         pygame.mixer.init()
-                    
+
                     pygame.mixer.music.load(temp_audio_file)
                     audio_available = True
                     print("[音频] pygame音频加载成功")
@@ -4265,174 +5312,235 @@ class ScreenRecorder:
                     print(f"[音频] pygame加载失败: {e}")
             else:
                 print(f"[音频] 提取音频失败: {result.stderr}")
-                
+
         except Exception as e:
             print(f"[音频] FFmpeg提取失败: {e}")
-        
-        # 保存引用供其他函数使用
+
         self.audio_available = audio_available
         self.pygame = pygame
-        
-        # 强制使用 FFmpeg 后端，确保支持精确 seek
+
         self.video_capture = cv2.VideoCapture(self.video_file, cv2.CAP_FFMPEG)
         if not self.video_capture.isOpened():
-            # 如果 FFmpeg 后端失败，尝试默认后端
             self.video_capture = cv2.VideoCapture(self.video_file)
-        
+
         if not self.video_capture.isOpened():
             messagebox.showerror("错误", "无法打开视频文件")
             self.video_playing = False
             self.play_btn.config(state=tk.NORMAL)
             self.pause_video_btn.config(state=tk.DISABLED)
             return
-        
-        print(f"[视频] 使用后端: {'FFmpeg' if cv2.CAP_FFMPEG else '默认'}")
-        
+
+        print(f"[初始化] 开始播放视频: {self.video_file}")
+
         self.stop_video = False
         frame_count = 0
         fps = self.video_capture.get(cv2.CAP_PROP_FPS)
-        print(f"开始播放视频: {self.video_file}")
-        
-        # 检查是否处于截取视频状态
+        if fps is None or fps <= 0 or fps > 120:
+            fps = 30.0
+
+        metadata_frames = int(self.video_capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        print(f"[初始化] 视频元数据: FPS={fps}, 总帧数={metadata_frames}")
+
+        real_total_frames = 0
+        temp_cap = cv2.VideoCapture(self.video_file)
+        if temp_cap.isOpened():
+            while True:
+                ret, _ = temp_cap.read()
+                if not ret:
+                    break
+                real_total_frames += 1
+            temp_cap.release()
+            self.video_capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        print(f"[初始化] 真实可读取帧数: {real_total_frames}")
+
+        if (
+            hasattr(self, "_real_recorded_duration")
+            and self._real_recorded_duration > 0
+            and real_total_frames > 0
+        ):
+            calculated_fps = real_total_frames / self._real_recorded_duration
+            total_frames = real_total_frames
+            expected_duration = self._real_recorded_duration
+            print(f"[初始化] 使用录制时长: {expected_duration:.2f}秒, 计算FPS: {calculated_fps:.2f}")
+            if abs(calculated_fps - fps) > 1.0:
+                fps = calculated_fps
+                print(f"[初始化] 调整FPS为: {fps:.2f}")
+            self.video_duration = expected_duration
+        else:
+            total_frames = real_total_frames if real_total_frames > 0 else metadata_frames
+            expected_duration = total_frames / fps if fps > 0 else 0
+            print(f"[初始化] 无录制时长信息, 预期时长: {expected_duration:.2f}秒")
+
         start_offset_sec = 0.0
         if self.clip_mode and self.video_duration > 0:
             start_offset_sec = self.clip_start
-            # 设置视频起始位置为入点
             start_pos_msec = start_offset_sec * 1000
             with self.video_lock:
                 self.video_capture.set(cv2.CAP_PROP_POS_MSEC, start_pos_msec)
-            print(f"截取模式：从 {self.clip_start:.2f} 秒开始播放，到 {self.clip_end:.2f} 秒结束")
-        
-        # 初始化时间基准（关键：用于seek后的同步重建）
+            print(
+                f"截取模式：从 {self.clip_start:.2f} 秒开始播放，到 {self.clip_end:.2f} 秒结束"
+            )
+
         self.playback_base_sec = start_offset_sec
-        # 使用系统时间作为时间基准（避免pygame.time.get_ticks()的问题）
         self.play_start_time = time.time()
-        
-        # 音频是否已开始播放的标志（避免在音频未开始时误判为结束）
+
         audio_started = False
-        
+        loop_count = 0
+        frame_pacing_time = 0.0
+
         while self.video_playing and not self.stop_video:
-            # 使用get_busy()检测音频是否播放完毕（避免需要初始化display）
-            # 只有在音频已开始播放后才检测是否结束
-            if audio_started and audio_available and pygame and pygame.mixer.music.get_busy() == False:
-                print("[音频] 音频播放结束")
+            loop_start_time = time.time()
+            loop_count += 1
+
+            if (
+                audio_started
+                and audio_available
+                and pygame
+                and pygame.mixer.music.get_busy() == False
+            ):
+                print(f"[结束] 音频播放结束")
                 self.video_playing = False
                 break
-            
+
             if not self.video_paused:
-                # 第一帧时开始播放音频
-                if frame_count == 0 and audio_available and pygame and not pygame.mixer.music.get_busy():
+                if (
+                    frame_count == 0
+                    and audio_available
+                    and pygame
+                    and not pygame.mixer.music.get_busy()
+                ):
+                    print(f"[音频] 开始播放音频，起始偏移: {start_offset_sec:.2f}秒")
                     pygame.mixer.music.play(start=start_offset_sec)
                     audio_started = True
-                    print(f"[音频] 开始播放音频，起始偏移: {start_offset_sec:.2f}秒")
-                
-                # 计算当前播放位置（使用更新后的时间基准）
+
                 current_playback_sec = 0.0
-                if audio_started and audio_available and pygame and pygame.mixer.music.get_busy():
-                    # 使用pygame的音频位置作为主时钟（最可靠）
+                audio_pos_ms = -1
+                video_frame_time = frame_count / fps
+                if (
+                    audio_started
+                    and audio_available
+                    and pygame
+                    and pygame.mixer.music.get_busy()
+                ):
                     audio_pos_ms = pygame.mixer.music.get_pos()
-                    # 使用 self.playback_base_sec 而不是 start_offset_sec，支持拖动后的同步
-                    current_playback_sec = self.playback_base_sec + audio_pos_ms / 1000.0
-                    # 每2秒打印一次同步信息
-                    if int(current_playback_sec) % 2 == 0 and frame_count % 20 == 0:
-                        print(f"[同步] 音频: {audio_pos_ms}ms, 播放: {current_playback_sec:.2f}s, 基准: {self.playback_base_sec:.2f}s")
+                    current_playback_sec = (
+                        self.playback_base_sec + audio_pos_ms / 1000.0
+                    )
+                    sync_diff = current_playback_sec - video_frame_time
+                    if loop_count % 30 == 0:
+                        print(f"[同步] 音频={audio_pos_ms}ms({current_playback_sec:.2f}s), 视频帧={frame_count}({video_frame_time:.2f}s), 差值={sync_diff*1000:.1f}ms")
                 else:
-                    # 没有音频时，使用帧计数计算播放位置
-                    current_playback_sec = frame_count / fps
-                
-                # 如果发生 seek，重置 frame_count 与视频实际位置同步
+                    current_playback_sec = video_frame_time
+                    if loop_count % 30 == 0:
+                        print(f"[同步] 无音频, 视频帧={frame_count}({video_frame_time:.2f}s)")
+
                 if self.seek_occurred:
+                    print(f"[Seek] seek发生, 当前播放时间={current_playback_sec:.2f}s, 重置frame_count从{frame_count}到{max(0, int(current_playback_sec * fps))}")
                     self.seek_occurred = False
-                    # 用更新后的时间基准重新计算帧号，避免跳帧循环从旧帧号开始追赶
                     frame_count = max(0, int(current_playback_sec * fps))
-                    print(f"[同步] seek 后重置 frame_count={frame_count}, 当前时间={current_playback_sec:.2f}s")
-                
-                # 只有有音频时才进行跳帧追赶
+                    frame_pacing_time = 0.0
+
                 if audio_available and pygame and pygame.mixer.music.get_busy():
-                    # 计算应该显示的帧号
                     expected_frame = int(current_playback_sec * fps)
-                    
-                    # 如果视频落后太多，快速跳帧追赶
+                    frame_diff = expected_frame - frame_count
+                    if abs(frame_diff) > 0 and loop_count % 30 == 0:
+                        print(f"[追赶] 预期帧={expected_frame}, 当前帧={frame_count}, 差值={frame_diff}")
+
                     skip_count = 0
                     while frame_count < expected_frame - 1:
                         with self.video_lock:
-                            self.video_capture.grab()  # 快速跳过帧
+                            self.video_capture.grab()
                         frame_count += 1
                         skip_count += 1
-                    if skip_count > 5:  # 只在跳过较多帧时打印
-                        print(f"[同步] 跳过 {skip_count} 帧追赶")
-                
-                print(f"[主页面] 准备读取帧，当前帧={frame_count}, 播放时间={current_playback_sec:.2f}s")
+                    if skip_count > 0:
+                        print(f"[追赶] 跳过 {skip_count} 帧")
+
+                read_start = time.time()
                 with self.video_lock:
                     ret, frame = self.video_capture.read()
-                    if not ret:
-                        print(f"[主页面] 读取帧失败，播放结束")
-                        break
-                
-                # 更新当前播放时间（使用时间基准计算的值）
+                read_duration = (time.time() - read_start) * 1000
+                if not ret:
+                    print(f"[结束] 读取帧失败，播放结束")
+                    break
+                if loop_count % 30 == 0:
+                    print(f"[渲染] 读取耗时: {read_duration:.1f}ms")
+
                 if not self.progress_bar_dragging:
                     self.current_time = current_playback_sec
-                
-                # 检查是否处于截取视频状态，如果是，检查是否到达出点
+
                 if self.clip_mode and self.video_duration > 0:
                     if self.current_time > self.clip_end:
-                        print(f"[主页面] 到达出点 {self.clip_end:.2f} 秒，播放结束")
+                        print(f"[结束] 到达出点 {self.clip_end:.2f} 秒，播放结束")
                         break
-                
+
+                render_start = time.time()
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 img = Image.fromarray(frame)
-                # 缩放帧以适应canvas大小，保持宽高比
                 canvas_width = self.canvas.winfo_width()
                 canvas_height = self.canvas.winfo_height()
                 if canvas_width > 0 and canvas_height > 0:
                     img_width, img_height = img.size
                     canvas_ratio = canvas_width / canvas_height
                     img_ratio = img_width / img_height
-                    
+
                     if canvas_ratio > img_ratio:
-                        # Canvas更宽，以高度为基准缩放
                         new_height = canvas_height
                         new_width = int(img_width * (canvas_height / img_height))
                     else:
-                        # Canvas更高，以宽度为基准缩放
                         new_width = canvas_width
                         new_height = int(img_height * (canvas_width / img_width))
-                    
+
                     img = img.resize((new_width, new_height), Image.LANCZOS)
                 imgtk = ImageTk.PhotoImage(image=img)
-                self.canvas.create_image(canvas_width // 2, canvas_height // 2, anchor=tk.CENTER, image=imgtk)
+                self.canvas.create_image(
+                    canvas_width // 2, canvas_height // 2, anchor=tk.CENTER, image=imgtk
+                )
                 self.canvas.imgtk = imgtk
                 self.root.update()
-                
-                # 更新帧计数
+                render_duration = (time.time() - render_start) * 1000
+
                 frame_count += 1
-                
+
                 if frame_count % 10 == 0:
                     self.update_progress_bar()
                     self.update_time_label()
-                
-                # 根据计算的播放位置动态调整延迟（保持稳定帧率）
-                target_delay = 1.0 / fps
-                time.sleep(target_delay * 0.8)
+
+                target_interval = 1.0 / fps
+                if frame_pacing_time == 0.0:
+                    frame_pacing_time = time.perf_counter()
+                else:
+                    frame_pacing_time += target_interval
+                now = time.perf_counter()
+                wait = frame_pacing_time - now
+                if wait > 0.001:
+                    if wait > 0.008:
+                        time.sleep(wait - 0.003)
+                    while time.perf_counter() < frame_pacing_time:
+                        pass
+                else:
+                    frame_pacing_time = now
+                if loop_count % 30 == 0:
+                    loop_duration = (time.time() - loop_start_time) * 1000
+                    print(f"[帧率] 循环耗时: {loop_duration:.1f}ms, 目标: {target_interval*1000:.1f}ms, 等待: {max(0, wait)*1000:.1f}ms")
             else:
-                # 暂停时暂停音频
+                frame_pacing_time = 0.0
                 if audio_available and pygame and pygame.mixer.music.get_busy():
                     pygame.mixer.music.pause()
                 time.sleep(0.1)
-        
+
         print(f"[主页面] 播放循环结束，frame_count={frame_count}")
-        
+
         # 停止音频播放
         if audio_available and pygame:
             pygame.mixer.music.stop()
             pygame.mixer.quit()
             print("[音频] 音频播放停止")
-        
+
         # 删除临时音频文件
         if os.path.exists(temp_audio_file):
             os.remove(temp_audio_file)
             print(f"[音频] 删除临时音频文件: {temp_audio_file}")
-        
+
         if self.video_capture:
             with self.video_lock:
                 self.video_capture.release()
@@ -4445,8 +5553,7 @@ class ScreenRecorder:
         self.current_time = self.video_duration
         self.update_progress_bar()
         self.update_time_label()
-        print("[主页面] 视频播放完成，状态已更新")
-    
+
     def pause_video(self):
         self.video_paused = not self.video_paused
         if self.video_paused:
@@ -4459,15 +5566,19 @@ class ScreenRecorder:
             self.play_btn.config(state=tk.DISABLED)
             self.pause_video_btn.config(state=tk.NORMAL)
             self.status_label.config(text="状态: 播放中", fg="#4CAF50")
-    
+
     def on_progress_click(self, event):
-        print(f"\n[进度条点击] video_duration={self.video_duration:.2f}, clip_mode={self.clip_mode}, progress_bar_dragging={self.progress_bar_dragging}")
+        print(
+            f"\n[进度条点击] video_duration={self.video_duration:.2f}, clip_mode={self.clip_mode}, progress_bar_dragging={self.progress_bar_dragging}"
+        )
         if self.video_duration > 0:
             # 检查是否点击了剪辑标记区域
             if not self.clip_mode:
                 self.progress_bar_dragging = True
                 width = self.progress_canvas.winfo_width()
-                print(f"[进度条点击] 画布宽度={width}, 点击位置x={event.x}, y={event.y}")
+                print(
+                    f"[进度条点击] 画布宽度={width}, 点击位置x={event.x}, y={event.y}"
+                )
                 if width > 0:
                     padding = 20
                     usable_width = width - 2 * padding
@@ -4479,7 +5590,9 @@ class ScreenRecorder:
                     else:
                         position = (event.x - padding) / usable_width
                     self.current_time = position * self.video_duration
-                    print(f"[进度条点击] 计算位置={position}, current_time={self.current_time:.2f}s")
+                    print(
+                        f"[进度条点击] 计算位置={position}, current_time={self.current_time:.2f}s"
+                    )
                     # 显示时间提示
                     self.show_time_tooltip(event.x, event.y, self.current_time)
                     self.update_progress_bar()
@@ -4490,9 +5603,11 @@ class ScreenRecorder:
                 pass
         else:
             print(f"[进度条点击] video_duration为0，无法拖动")
-    
+
     def on_progress_drag(self, event):
-        print(f"[进度条拖动] 拖动状态: progress_bar_dragging={self.progress_bar_dragging}, video_duration={self.video_duration:.2f}")
+        print(
+            f"[进度条拖动] 拖动状态: progress_bar_dragging={self.progress_bar_dragging}, video_duration={self.video_duration:.2f}"
+        )
         if self.progress_bar_dragging and self.video_duration > 0:
             width = self.progress_canvas.winfo_width()
             if width > 0:
@@ -4506,20 +5621,22 @@ class ScreenRecorder:
                 else:
                     position = (event.x - padding) / usable_width
                 self.current_time = position * self.video_duration
-                print(f"[进度条拖动] 位置: x={event.x}, position={position:.3f}, current_time={self.current_time:.2f}s")
+                print(
+                    f"[进度条拖动] 位置: x={event.x}, position={position:.3f}, current_time={self.current_time:.2f}s"
+                )
                 # 显示时间提示
                 self.show_time_tooltip(event.x, event.y, self.current_time)
                 self.update_progress_bar()
                 self.update_time_label()
                 # 拖动过程中只更新UI，不写播放器（避免频繁seek导致同步问题）
-    
+
     def on_progress_release(self, event):
         if self.progress_bar_dragging:
             self.progress_bar_dragging = False
             target_sec = self.current_time
-            
+
             print(f"[进度] 拖动到: {target_sec:.2f}秒")
-            
+
             # 更新视频位置
             with self.video_lock:
                 if self.video_playing and self.video_capture:
@@ -4529,22 +5646,28 @@ class ScreenRecorder:
                     self.video_capture.grab()
                     # 验证 seek 是否成功
                     new_pos = self.video_capture.get(cv2.CAP_PROP_POS_MSEC)
-                    print(f"[视频] seek 目标: {target_sec * 1000:.2f} ms, 实际: {new_pos:.2f} ms")
+                    print(
+                        f"[视频] seek 目标: {target_sec * 1000:.2f} ms, 实际: {new_pos:.2f} ms"
+                    )
                     if abs(new_pos - target_sec * 1000) > 100:
                         # 如果 seek 失败，尝试使用帧索引
                         fps = self.video_capture.get(cv2.CAP_PROP_FPS)
                         if fps > 0:
                             target_frame = int(target_sec * fps)
-                            self.video_capture.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+                            self.video_capture.set(
+                                cv2.CAP_PROP_POS_FRAMES, target_frame
+                            )
                             new_pos = self.video_capture.get(cv2.CAP_PROP_POS_MSEC)
-                            print(f"[视频] 重试 seek（帧索引）: 目标帧 {target_frame}, 实际: {new_pos:.2f} ms")
-            
+                            print(
+                                f"[视频] 重试 seek（帧索引）: 目标帧 {target_frame}, 实际: {new_pos:.2f} ms"
+                            )
+
             # 标记 seek 发生，通知播放线程重置 frame_count
             self.seek_occurred = True
-            
+
             # 同步音频位置到拖动位置
-            if hasattr(self, 'audio_available') and self.audio_available:
-                if hasattr(self, 'pygame') and self.pygame:
+            if hasattr(self, "audio_available") and self.audio_available:
+                if hasattr(self, "pygame") and self.pygame:
                     try:
                         # 停止当前播放并从新位置开始
                         self.pygame.mixer.music.stop()
@@ -4552,23 +5675,26 @@ class ScreenRecorder:
                         print(f"[音频] seek到: {target_sec:.2f}秒")
                     except Exception as e:
                         print(f"[音频] seek失败: {e}")
-            
+
             # 关键修复：更新播放时间基准，确保进度显示同步
-            print(f"[进度] 更新时间基准: playback_base_sec = {target_sec}, play_start_time = 当前时间")
+            print(
+                f"[进度] 更新时间基准: playback_base_sec = {target_sec}, play_start_time = 当前时间"
+            )
             self.playback_base_sec = target_sec
             self.play_start_time = time.time()
-            
+
             # 销毁时间提示窗口
-            if hasattr(self, 'time_tooltip') and self.time_tooltip:
+            if hasattr(self, "time_tooltip") and self.time_tooltip:
                 try:
                     self.time_tooltip.destroy()
                 except:
                     pass
             # 更新提示信息
             self.update_hints()
-    
+
     def update_hints(self):
         """更新常驻提示信息"""
+
         # 格式化时间（支持小时）
         def format_time(seconds):
             if seconds < 0:
@@ -4582,38 +5708,38 @@ class ScreenRecorder:
                 return f"{hours:02d}:{mins:02d}:{secs:02d}"
             else:
                 return f"{mins:02d}:{secs:02d}"
-        
+
         # 更新进度旋钮提示
         knob_time = format_time(self.current_time)
-        if hasattr(self, 'knob_hint_label'):
+        if hasattr(self, "knob_hint_label"):
             self.knob_hint_label.config(text=f"进度: {knob_time}")
-        if hasattr(self, 'knob_hint_entry'):
+        if hasattr(self, "knob_hint_entry"):
             self.knob_hint_entry.delete(0, tk.END)
             self.knob_hint_entry.insert(0, knob_time)
-        
+
         # 更新入点提示
         in_point_time = format_time(self.clip_start)
-        if hasattr(self, 'in_point_hint_label'):
+        if hasattr(self, "in_point_hint_label"):
             self.in_point_hint_label.config(text=f"截取入点: {in_point_time}")
-        if hasattr(self, 'in_point_hint_entry'):
+        if hasattr(self, "in_point_hint_entry"):
             self.in_point_hint_entry.delete(0, tk.END)
             self.in_point_hint_entry.insert(0, in_point_time)
-        
+
         # 更新出点提示
         out_point_time = format_time(self.clip_end)
-        if hasattr(self, 'out_point_hint_label'):
+        if hasattr(self, "out_point_hint_label"):
             self.out_point_hint_label.config(text=f"截取出点: {out_point_time}")
-        if hasattr(self, 'out_point_hint_entry'):
+        if hasattr(self, "out_point_hint_entry"):
             self.out_point_hint_entry.delete(0, tk.END)
             self.out_point_hint_entry.insert(0, out_point_time)
-    
+
     def on_knob_hint_change(self, event):
         """进度旋钮提示变化"""
         try:
             # 解析时间输入（支持HH:MM:SS和MM:SS格式）
             time_str = self.knob_hint_entry.get().strip()
-            if ':' in time_str:
-                parts = time_str.split(':')
+            if ":" in time_str:
+                parts = time_str.split(":")
                 if len(parts) == 3:
                     # HH:MM:SS格式
                     hours, mins, secs = int(parts[0]), int(parts[1]), int(parts[2])
@@ -4624,33 +5750,33 @@ class ScreenRecorder:
                     new_time = mins * 60 + secs
             else:
                 new_time = int(time_str)
-            
+
             # 验证时间范围
             if new_time < 0:
                 new_time = 0
             if self.video_duration > 0 and new_time > self.video_duration:
                 new_time = self.video_duration
-            
+
             # 更新当前时间
             self.current_time = new_time
             self.update_progress_bar()
             self.update_hints()
-            
+
             # 更新时间标签
             current_time_str = self.format_time(self.current_time)
             total_time_str = self.format_time(self.video_duration)
             self.time_label.config(text=f"{current_time_str} / {total_time_str}")
-            
+
         except ValueError:
             pass
-    
+
     def on_in_point_hint_change(self, event):
         """入点提示变化"""
         try:
             # 解析时间输入（支持HH:MM:SS和MM:SS格式）
             time_str = self.in_point_hint_entry.get().strip()
-            if ':' in time_str:
-                parts = time_str.split(':')
+            if ":" in time_str:
+                parts = time_str.split(":")
                 if len(parts) == 3:
                     # HH:MM:SS格式
                     hours, mins, secs = int(parts[0]), int(parts[1]), int(parts[2])
@@ -4661,7 +5787,7 @@ class ScreenRecorder:
                     new_time = mins * 60 + secs
             else:
                 new_time = int(time_str)
-            
+
             # 验证时间范围
             if new_time < 0:
                 new_time = 0
@@ -4669,22 +5795,22 @@ class ScreenRecorder:
                 new_time = self.video_duration
             if new_time > self.clip_end:
                 new_time = self.clip_end
-            
+
             # 更新入点
             self.clip_start = new_time
             self.update_progress_bar()
             self.update_hints()
-            
+
         except ValueError:
             pass
-    
+
     def on_out_point_hint_change(self, event):
         """出点提示变化"""
         try:
             # 解析时间输入（支持HH:MM:SS和MM:SS格式）
             time_str = self.out_point_hint_entry.get().strip()
-            if ':' in time_str:
-                parts = time_str.split(':')
+            if ":" in time_str:
+                parts = time_str.split(":")
                 if len(parts) == 3:
                     # HH:MM:SS格式
                     hours, mins, secs = int(parts[0]), int(parts[1]), int(parts[2])
@@ -4695,7 +5821,7 @@ class ScreenRecorder:
                     new_time = mins * 60 + secs
             else:
                 new_time = int(time_str)
-            
+
             # 验证时间范围
             if new_time < 0:
                 new_time = 0
@@ -4703,15 +5829,15 @@ class ScreenRecorder:
                 new_time = self.video_duration
             if new_time < self.clip_start:
                 new_time = self.clip_start
-            
+
             # 更新出点
             self.clip_end = new_time
             self.update_progress_bar()
             self.update_hints()
-            
+
         except ValueError:
             pass
-    
+
     def show_phone_form(self):
         """手机号表单"""
         for widget in self.form_frame.winfo_children():
@@ -4719,80 +5845,141 @@ class ScreenRecorder:
 
         mode = self.login_mode.get()
 
-        phone_label = tk.Label(self.form_frame, text="手机号", bg="#252525", fg="#ffffff", font=('Arial', 12))
+        phone_label = tk.Label(
+            self.form_frame,
+            text="手机号",
+            bg="#252525",
+            fg="#ffffff",
+            font=("Arial", 12),
+        )
         phone_label.pack(anchor=tk.W, pady=(0, 5))
-        self.phone_entry = tk.Entry(self.form_frame, bg="#2d2d2d", fg="#ffffff",
-                                    insertbackground='white', font=('Arial', 12), bd=1, relief='solid')
+        self.phone_entry = tk.Entry(
+            self.form_frame,
+            bg="#2d2d2d",
+            fg="#ffffff",
+            insertbackground="white",
+            font=("Arial", 12),
+            bd=1,
+            relief="solid",
+        )
         self.phone_entry.pack(fill=tk.X, pady=(0, 15))
 
         if mode == "register":
-            code_label = tk.Label(self.form_frame, text="验证码", bg="#252525", fg="#ffffff", font=('Arial', 12))
+            code_label = tk.Label(
+                self.form_frame,
+                text="验证码",
+                bg="#252525",
+                fg="#ffffff",
+                font=("Arial", 12),
+            )
             code_label.pack(anchor=tk.W, pady=(0, 5))
-            
+
             code_input_frame = tk.Frame(self.form_frame, bg="#252525")
             code_input_frame.pack(fill=tk.X, pady=(0, 15))
-            
-            self.phone_code_entry = tk.Entry(code_input_frame, bg="#2d2d2d", fg="#ffffff",
-                                               insertbackground='white', font=('Arial', 12), bd=1, relief='solid', width=15)
+
+            self.phone_code_entry = tk.Entry(
+                code_input_frame,
+                bg="#2d2d2d",
+                fg="#ffffff",
+                insertbackground="white",
+                font=("Arial", 12),
+                bd=1,
+                relief="solid",
+                width=15,
+            )
             self.phone_code_entry.pack(side=tk.LEFT, padx=(0, 10))
-            
-            self.send_code_btn = tk.Button(code_input_frame, text="发送验证码",
-                                         command=self.send_sms_code,
-                                         bg="#4CAF50", fg="#ffffff", font=('Arial', 10),
-                                         relief='flat', padx=10, pady=5)
+
+            self.send_code_btn = tk.Button(
+                code_input_frame,
+                text="发送验证码",
+                command=self.send_sms_code,
+                bg="#4CAF50",
+                fg="#ffffff",
+                font=("Arial", 10),
+                relief="flat",
+                padx=10,
+                pady=5,
+            )
             self.send_code_btn.pack(side=tk.LEFT)
 
-        pwd_label = tk.Label(self.form_frame, text="密码", bg="#252525", fg="#ffffff", font=('Arial', 12))
+        pwd_label = tk.Label(
+            self.form_frame, text="密码", bg="#252525", fg="#ffffff", font=("Arial", 12)
+        )
         pwd_label.pack(anchor=tk.W, pady=(0, 5))
-        self.phone_pwd_entry = tk.Entry(self.form_frame, bg="#2d2d2d", fg="#ffffff",
-                                         insertbackground='white', font=('Arial', 12), bd=1, relief='solid', show='*')
+        self.phone_pwd_entry = tk.Entry(
+            self.form_frame,
+            bg="#2d2d2d",
+            fg="#ffffff",
+            insertbackground="white",
+            font=("Arial", 12),
+            bd=1,
+            relief="solid",
+            show="*",
+        )
         self.phone_pwd_entry.pack(fill=tk.X)
-    
+
     def show_wechat_form(self):
         """微信表单"""
         for widget in self.form_frame.winfo_children():
             widget.destroy()
-        
+
         qr_frame = tk.Frame(self.form_frame, bg="#333333", padx=40, pady=20)
         qr_frame.pack(fill=tk.X)
-        
+
         qr_canvas = tk.Canvas(qr_frame, width=180, height=180, bg="#ffffff")
         qr_canvas.pack(pady=10)
-        
+
         # 绘制二维码图案
-        qr_canvas.create_rectangle(0, 0, 180, 180, fill="#ffffff", outline="#ccc", width=2)
-        
+        qr_canvas.create_rectangle(
+            0, 0, 180, 180, fill="#ffffff", outline="#ccc", width=2
+        )
+
         # 左上角定位点
         qr_canvas.create_rectangle(8, 8, 40, 40, fill="#000000")
         qr_canvas.create_rectangle(14, 14, 34, 34, fill="#ffffff")
         qr_canvas.create_rectangle(20, 20, 28, 28, fill="#000000")
-        
+
         # 右上角定位点
         qr_canvas.create_rectangle(140, 8, 172, 40, fill="#000000")
         qr_canvas.create_rectangle(146, 14, 166, 34, fill="#ffffff")
         qr_canvas.create_rectangle(152, 20, 160, 28, fill="#000000")
-        
+
         # 左下角定位点
         qr_canvas.create_rectangle(8, 140, 40, 172, fill="#000000")
         qr_canvas.create_rectangle(14, 146, 34, 166, fill="#ffffff")
         qr_canvas.create_rectangle(20, 152, 28, 160, fill="#000000")
-        
+
         # 绘制随机点阵
         for i in range(10):
             for j in range(10):
-                if not (i < 4 and j < 4) and not (i < 4 and j > 5) and not (i > 5 and j < 4):
+                if (
+                    not (i < 4 and j < 4)
+                    and not (i < 4 and j > 5)
+                    and not (i > 5 and j < 4)
+                ):
                     if (i + j) % 2 == 0:
                         x = 45 + i * 13
                         y = 45 + j * 13
-                        qr_canvas.create_rectangle(x, y, x+11, y+11, fill="#000000")
-        
-        qr_label = tk.Label(qr_frame, text="微信扫码登录", bg="#333333", fg="#ffffff", font=('Arial', 12))
+                        qr_canvas.create_rectangle(x, y, x + 11, y + 11, fill="#000000")
+
+        qr_label = tk.Label(
+            qr_frame,
+            text="微信扫码登录",
+            bg="#333333",
+            fg="#ffffff",
+            font=("Arial", 12),
+        )
         qr_label.pack(pady=(10, 0))
-        
-        tip_label = tk.Label(self.form_frame, text="请打开微信扫一扫，扫描上方二维码", 
-                            bg="#252525", fg="#b0b0b0", font=('Arial', 10))
+
+        tip_label = tk.Label(
+            self.form_frame,
+            text="请打开微信扫一扫，扫描上方二维码",
+            bg="#252525",
+            fg="#b0b0b0",
+            font=("Arial", 10),
+        )
         tip_label.pack(pady=10)
-    
+
     def switch_login_method(self):
         """切换登录方式"""
         method = self.login_method.get()
@@ -4806,7 +5993,6 @@ class ScreenRecorder:
             self.marker_note_var.set(marker.get("note", ""))
             self.marker_edit_window.deiconify()
 
-
     def show_notification(self, message, is_weak=False, parent=None):
         if is_weak:
             # 弱提示，自动消失
@@ -4814,40 +6000,58 @@ class ScreenRecorder:
             weak_notification.title("通知")
             weak_notification.geometry("260x80")
             weak_notification.transient(self.root)
-            weak_notification.attributes('-topmost', True)
+            weak_notification.attributes("-topmost", True)
             weak_notification.configure(bg=self.card_bg)
-            
+
             # 添加边框效果
             weak_notification.overrideredirect(True)
-            
+
             # 创建圆角效果的画布
-            canvas = tk.Canvas(weak_notification, width=260, height=80, bg=self.card_bg, 
-                            highlightthickness=1, highlightbackground=self.border_color)
+            canvas = tk.Canvas(
+                weak_notification,
+                width=260,
+                height=80,
+                bg=self.card_bg,
+                highlightthickness=1,
+                highlightbackground=self.border_color,
+            )
             canvas.pack()
-            
+
             # 绘制圆角背景
             def create_roundrectangle(canvas, x1, y1, x2, y2, radius, **kwargs):
                 points = [
-                    x1+radius, y1,
-                    x2-radius, y1,
-                    x2, y1+radius,
-                    x2, y2-radius,
-                    x2-radius, y2,
-                    x1+radius, y2,
-                    x1, y2-radius,
-                    x1, y1+radius
+                    x1 + radius,
+                    y1,
+                    x2 - radius,
+                    y1,
+                    x2,
+                    y1 + radius,
+                    x2,
+                    y2 - radius,
+                    x2 - radius,
+                    y2,
+                    x1 + radius,
+                    y2,
+                    x1,
+                    y2 - radius,
+                    x1,
+                    y1 + radius,
                 ]
                 return canvas.create_polygon(points, **kwargs)
-            
-            create_roundrectangle(canvas, 0, 0, 260, 80, 8, fill=self.light_bg, outline=self.accent_color)
-            
+
+            create_roundrectangle(
+                canvas, 0, 0, 260, 80, 8, fill=self.light_bg, outline=self.accent_color
+            )
+
             # 添加文本
-            canvas.create_text(130, 40, text=message, fill=self.text_color, font=('Arial', 10, 'bold'))
-            
+            canvas.create_text(
+                130, 40, text=message, fill=self.text_color, font=("Arial", 10, "bold")
+            )
+
             # 计算位置，让通知显示在指定父窗口的上方
             screen_width = self.root.winfo_screenwidth()
             screen_height = self.root.winfo_screenheight()
-            
+
             if parent is not None:
                 parent.update_idletasks()
                 parent_x = parent.winfo_x()
@@ -4856,7 +6060,7 @@ class ScreenRecorder:
                 # 在父窗口（缩略功能区）下方显示
                 x = parent_x + (parent_width - 260) // 2  # 水平居中于弹窗
                 y = parent_y + parent.winfo_height() + 10  # 在弹窗下方显示
-                
+
                 # 确保通知在屏幕内
                 if x < 10:
                     x = 10
@@ -4866,14 +6070,16 @@ class ScreenRecorder:
                     y = screen_height - 90
             else:
                 # 如果没有指定父窗口，但有缩略功能区窗口，显示在缩略功能区下方
-                if hasattr(self, 'mini_window') and self.mini_window:
+                if hasattr(self, "mini_window") and self.mini_window:
                     self.mini_window.update_idletasks()
                     mini_x = self.mini_window.winfo_x()
                     mini_y = self.mini_window.winfo_y()
                     mini_width = self.mini_window.winfo_width()
                     x = mini_x + (mini_width - 260) // 2  # 水平居中于缩略功能区
-                    y = mini_y + self.mini_window.winfo_height() + 10  # 在缩略功能区下方显示
-                    
+                    y = (
+                        mini_y + self.mini_window.winfo_height() + 10
+                    )  # 在缩略功能区下方显示
+
                     # 确保通知在屏幕内
                     if x < 10:
                         x = 10
@@ -4886,11 +6092,11 @@ class ScreenRecorder:
                     x = screen_width - 280
                     y = screen_height - 100
             weak_notification.geometry(f"260x80+{x}+{y}")
-            
+
             # 显示通知
             weak_notification.deiconify()
             weak_notification.lift()  # 将窗口提升到最顶层
-            
+
             # 2秒后自动销毁
             self.root.after(2000, lambda: weak_notification.destroy())
         else:
@@ -4916,58 +6122,71 @@ class ScreenRecorder:
         history_window.geometry("800x450")  # 增大高度，确保能显示按钮
         history_window.configure(bg="#1a1a1a")
         history_window.resizable(True, True)
-        
-        
+
         # 标题
-        title_label = tk.Label(history_window, text="录制记录", 
-                             font=('Arial', 14, 'bold'),
-                             bg="#1a1a1a", fg="#ffffff")
+        title_label = tk.Label(
+            history_window,
+            text="录制记录",
+            font=("Arial", 14, "bold"),
+            bg="#1a1a1a",
+            fg="#ffffff",
+        )
         title_label.pack(pady=10)
-        
+
         # 记录列表 - 使用Treeview实现表格
         list_frame = tk.Frame(history_window, bg="#1a1a1a")
         list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        
+
         # 创建Treeview
-        columns = ('录制时间', '记录内容')
-        history_tree = ttk.Treeview(list_frame, columns=columns, show='headings', selectmode='browse')
+        columns = ("录制时间", "记录内容")
+        history_tree = ttk.Treeview(
+            list_frame, columns=columns, show="headings", selectmode="browse"
+        )
         history_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
+
         # 设置列
-        history_tree.heading('录制时间', text='录制时间')
-        history_tree.heading('记录内容', text='记录内容')
-        history_tree.column('录制时间', width=180, anchor='center')
-        history_tree.column('记录内容', width=580, anchor='w')
-        
+        history_tree.heading("录制时间", text="录制时间")
+        history_tree.heading("记录内容", text="记录内容")
+        history_tree.column("录制时间", width=180, anchor="center")
+        history_tree.column("记录内容", width=580, anchor="w")
+
         # 设置样式
         style = ttk.Style()
-        style.configure("Treeview", 
-                       background="#252525",
-                       foreground="#ffffff",
-                       fieldbackground="#252525",
-                       rowheight=28)
-        style.configure("Treeview.Heading",
-                       background=self.card_bg,
-                       foreground="#ffffff",
-                       font=('Arial', 10, 'bold'))
-        style.map("Treeview", 
-                 background=[('selected', '#3a3a3a')],
-                 foreground=[('selected', '#ffffff')])
-        
+        style.configure(
+            "Treeview",
+            background="#252525",
+            foreground="#ffffff",
+            fieldbackground="#252525",
+            rowheight=28,
+        )
+        style.configure(
+            "Treeview.Heading",
+            background=self.card_bg,
+            foreground="#ffffff",
+            font=("Arial", 10, "bold"),
+        )
+        style.map(
+            "Treeview",
+            background=[("selected", "#3a3a3a")],
+            foreground=[("selected", "#ffffff")],
+        )
+
         # 添加滚动条
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=history_tree.yview)
+        scrollbar = ttk.Scrollbar(
+            list_frame, orient="vertical", command=history_tree.yview
+        )
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         history_tree.configure(yscrollcommand=scrollbar.set)
-        
+
         # 存储会话路径，用于打开功能
         session_paths = []
-        
+
         # 扫描recordings目录
         if os.path.exists(self.recordings_dir):
             sessions = os.listdir(self.recordings_dir)
             # 按时间戳排序，从远到近
             sessions.sort(reverse=False)
-            
+
             for session in sessions:
                 session_path = os.path.join(self.recordings_dir, session)
                 if os.path.isdir(session_path):
@@ -4975,42 +6194,49 @@ class ScreenRecorder:
                     is_valid, _ = self.is_valid_tool_session(session_path)
                     if not is_valid:
                         continue
-                    
-                    # 查找主视频文件（排除截取视频文件夹中的文件）
-                    clip_dir = os.path.join(session_path, self.clip_dir)
-                    all_files = os.listdir(session_path)
-                    video_files = [f for f in all_files if f.endswith('.avi') and os.path.join(session_path, f) != clip_dir]
-                    # 如果有截取视频文件夹，也排除其中的文件
-                    if os.path.exists(clip_dir):
-                        clip_avi_files = [f for f in os.listdir(clip_dir) if f.endswith('.avi')]
-                        video_files = [f for f in video_files if f not in clip_avi_files]
-                    
+
+                    # 查找主视频文件
+                    video_files = [
+                        f
+                        for f in os.listdir(session_path)
+                        if f.endswith(".mp4")
+                    ]
+
                     if video_files:
                         # 读取当前的实际文件名
                         current_filename = video_files[0]
-                        
+
                         # 格式化录制时间：年月日时分秒
-                        session_time = session.replace('_', '')
+                        session_time = session.replace("_", "")
                         if len(session_time) >= 14:
                             formatted_time = f"{session_time[:4]}-{session_time[4:6]}-{session_time[6:8]} {session_time[8:10]}:{session_time[10:12]}:{session_time[12:14]}"
                         else:
                             formatted_time = session_time
-                        
+
                         # 统计截取视频数量（新结构：每个片段一个文件夹）
                         clip_count = 0
+                        clip_dir = os.path.join(session_path, self.clip_dir)
                         if os.path.exists(clip_dir):
-                            clip_folders = [f for f in os.listdir(clip_dir) if os.path.isdir(os.path.join(clip_dir, f))]
+                            clip_folders = [
+                                f
+                                for f in os.listdir(clip_dir)
+                                if os.path.isdir(os.path.join(clip_dir, f))
+                            ]
                             clip_count = len(clip_folders)
-                        
+
                         # 添加到表格
-                        record_content = f"主视频: {current_filename} - 截取: {clip_count}个"
-                        history_tree.insert('', tk.END, values=(formatted_time, record_content))
+                        record_content = (
+                            f"主视频: {current_filename} - 截取: {clip_count}个"
+                        )
+                        history_tree.insert(
+                            "", tk.END, values=(formatted_time, record_content)
+                        )
                         session_paths.append(session_path)
-        
+
         # 滚动到最下面（显示最新记录）
         if history_tree.get_children():
             history_tree.see(history_tree.get_children()[-1])
-        
+
         # 打开按钮
         def open_selected_record():
             selected_item = history_tree.selection()
@@ -5019,58 +6245,71 @@ class ScreenRecorder:
                 item_index = history_tree.index(selected_item[0])
                 if item_index < len(session_paths):
                     session_path = session_paths[item_index]
-                    
+
                     if os.path.exists(session_path):
                         # 双重验证：确保是工具产生的视频
                         is_valid, error_msg = self.is_valid_tool_session(session_path)
                         if not is_valid:
                             messagebox.showerror(
                                 "无法打开此视频",
-                                "该视频不是由本工具录制产生的。\n\n录制记录功能仅支持打开本工具录制的视频文件。"
+                                "该视频不是由本工具录制产生的。\n\n录制记录功能仅支持打开本工具录制的视频文件。",
                             )
                             return
-                        
-                        # 查找主视频文件（排除截取视频文件夹中的文件）
-                        clip_dir = os.path.join(session_path, self.clip_dir)
-                        all_files = os.listdir(session_path)
-                        video_files = [f for f in all_files if f.endswith('.avi') and os.path.join(session_path, f) != clip_dir]
-                        # 如果有截取视频文件夹，也排除其中的文件
-                        if os.path.exists(clip_dir):
-                            clip_avi_files = [f for f in os.listdir(clip_dir) if f.endswith('.avi')]
-                            video_files = [f for f in video_files if f not in clip_avi_files]
-                        
+
+                        # 查找主视频文件
+                        video_files = [
+                            f
+                            for f in os.listdir(session_path)
+                            if f.endswith(".mp4")
+                        ]
+
                         if video_files:
                             # 打开视频文件
                             video_file = os.path.join(session_path, video_files[0])
                             self.video_file = video_file
-                            self.current_session_dir = session_path  # 更新当前会话目录
+                            self.current_session_dir = session_path
                             print(f"打开录制记录，会话目录: {self.current_session_dir}")
                             print(f"视频文件: {self.video_file}")
-                            # 检查截取视频文件夹
-                            clip_dir = os.path.join(self.current_session_dir, self.clip_dir)
+                            clip_dir = os.path.join(
+                                self.current_session_dir, self.clip_dir
+                            )
                             print(f"截取视频文件夹: {clip_dir}")
                             if os.path.exists(clip_dir):
-                                clip_files = [f for f in os.listdir(clip_dir) if f.endswith('.avi')]
-                                print(f"截取视频文件夹中存在 {len(clip_files)} 个文件")
+                                clip_folders = [
+                                    f
+                                    for f in os.listdir(clip_dir)
+                                    if os.path.isdir(os.path.join(clip_dir, f))
+                                ]
+                                print(f"截取视频文件夹中存在 {len(clip_folders)} 个片段文件夹")
                             else:
                                 print("截取视频文件夹不存在")
-                            
+
                             # 加载视频信息
                             self.show_first_frame()
-                            
+
                             # 关闭历史窗口
                             history_window.destroy()
-        
+
         # 按钮框架
         button_frame = tk.Frame(history_window, bg="#1a1a1a")
         button_frame.pack(fill=tk.X, padx=10, pady=10)
-        
-        open_btn = ttk.Button(button_frame, text="打开选中记录", command=open_selected_record, style='Accent.TButton')
+
+        open_btn = ttk.Button(
+            button_frame,
+            text="打开选中记录",
+            command=open_selected_record,
+            style="Accent.TButton",
+        )
         open_btn.pack(side=tk.LEFT, padx=5)
-        
-        close_btn = ttk.Button(button_frame, text="关闭", command=history_window.destroy, style='Custom.TButton')
+
+        close_btn = ttk.Button(
+            button_frame,
+            text="关闭",
+            command=history_window.destroy,
+            style="Custom.TButton",
+        )
         close_btn.pack(side=tk.RIGHT, padx=5)
-    
+
     def show_video_library(self):
         """显示/隐藏视频资料库"""
         # 检查视频资料库是否正在显示
@@ -5082,10 +6321,12 @@ class ScreenRecorder:
             # 隐藏视频片段面板
             self.right_frame.pack_forget()
             # 显示视频资料库面板
-            self.library_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 0))
+            self.library_frame.pack(
+                side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 0)
+            )
             # 初始化文件夹结构
             self.init_folder_structure()
-    
+
     def hide_video_library(self):
         """隐藏视频资料库"""
         # 隐藏视频资料库面板
@@ -5093,25 +6334,25 @@ class ScreenRecorder:
         # 显示视频片段面板
         self.right_frame.pack(side=tk.RIGHT, fill=tk.Y)
         self.right_frame.configure(width=self.right_panel_width)
-    
+
     def init_folder_structure(self):
         """初始化文件夹结构"""
         # 清空树状结构
         for item in self.folder_tree.get_children():
             self.folder_tree.delete(item)
-        
+
         # 添加根节点
-        root_id = self.folder_tree.insert('', tk.END, text="视频资料库", open=True)
-        
+        root_id = self.folder_tree.insert("", tk.END, text="视频资料库", open=True)
+
         # 递归添加目录结构
         if os.path.exists(self.video_library_dir):
             self._add_folder_children(root_id, self.video_library_dir)
-        
+
         # 重置搜索
-        if hasattr(self, 'search_var'):
+        if hasattr(self, "search_var"):
             self.search_var.set("")
             self.search_files()
-    
+
     def _add_folder_children(self, parent_id, parent_path):
         """递归添加文件夹和文件子节点"""
         try:
@@ -5119,40 +6360,57 @@ class ScreenRecorder:
                 item_path = os.path.join(parent_path, item)
                 if os.path.isdir(item_path):
                     # 检查当前子文件夹是否有子文件夹
-                    child_subdirs = [subitem for subitem in os.listdir(item_path) if os.path.isdir(os.path.join(item_path, subitem))]
+                    child_subdirs = [
+                        subitem
+                        for subitem in os.listdir(item_path)
+                        if os.path.isdir(os.path.join(item_path, subitem))
+                    ]
                     # 如果有子文件夹则展开，否则收起（只有视频文件时收起）
                     is_expand = len(child_subdirs) > 0
-                    folder_id = self.folder_tree.insert(parent_id, tk.END, text="📂 " + item, values=[item_path], open=is_expand)
+                    folder_id = self.folder_tree.insert(
+                        parent_id,
+                        tk.END,
+                        text="📂 " + item,
+                        values=[item_path],
+                        open=is_expand,
+                    )
                     # 递归添加子节点
                     self._add_folder_children(folder_id, item_path)
                 else:
                     # 添加文件节点（带彩色图标）
-                    self.folder_tree.insert(parent_id, tk.END, text=item, image=self.file_icon, values=[item_path], open=False)
+                    self.folder_tree.insert(
+                        parent_id,
+                        tk.END,
+                        text=item,
+                        image=self.file_icon,
+                        values=[item_path],
+                        open=False,
+                    )
         except PermissionError:
             print(f"无法访问: {parent_path}")
-    
+
     def show_folder_structure(self, event=None):
         """显示文件夹层级结构"""
         self.init_folder_structure()
-    
+
     def search_files(self, event=None):
         """搜索文件和文件夹"""
         keyword = self.library_search_var.get().strip()
-        
+
         # 重置目录树样式
-        for item in self.folder_tree.get_children(''):
+        for item in self.folder_tree.get_children(""):
             self._reset_tree_item_style(item)
-        
+
         if not keyword:
             # 如果没有关键词，清空统计信息
             self.search_stats_label.config(text="")
             return
-        
+
         # 搜索文件和文件夹
         results = []
         folder_count = 0
         file_count = 0
-        
+
         if os.path.exists(self.video_library_dir):
             for root, dirs, files in os.walk(self.video_library_dir):
                 # 搜索文件夹
@@ -5165,11 +6423,11 @@ class ScreenRecorder:
                     if keyword in file_name:
                         results.append((os.path.join(root, file_name), "文件"))
                         file_count += 1
-        
+
         # 高亮显示匹配的结果
         for path, type_ in results:
             self._highlight_tree_item(path)
-        
+
         # 显示搜索统计信息
         total_count = folder_count + file_count
         if total_count > 0:
@@ -5178,7 +6436,7 @@ class ScreenRecorder:
             )
         else:
             self.search_stats_label.config(text="没有找到匹配的结果")
-    
+
     def _reset_tree_item_style(self, item):
         """重置树状结构项的样式"""
         # 重置当前项
@@ -5186,80 +6444,80 @@ class ScreenRecorder:
         # 递归重置子项
         for child in self.folder_tree.get_children(item):
             self._reset_tree_item_style(child)
-    
+
     def _highlight_tree_item(self, path):
         """高亮显示匹配的树状结构项"""
         # 从根节点开始查找
-        root_item = self.folder_tree.get_children('')[0]
-        self._find_and_highlight_item(root_item, path)    
-    
+        root_item = self.folder_tree.get_children("")[0]
+        self._find_and_highlight_item(root_item, path)
+
     def _find_and_highlight_item(self, item, target_path):
         """递归查找并高亮匹配的树状结构项"""
-        values = self.folder_tree.item(item, 'values')
+        values = self.folder_tree.item(item, "values")
         if values:
             item_path = values[0]
             if item_path == target_path:
                 # 高亮显示匹配项
-                self.folder_tree.item(item, tags=('highlight',))
+                self.folder_tree.item(item, tags=("highlight",))
                 # 展开父节点
                 parent = self.folder_tree.parent(item)
                 while parent:
                     self.folder_tree.item(parent, open=True)
                     parent = self.folder_tree.parent(parent)
                 return True
-        
+
         # 递归搜索子项
         for child in self.folder_tree.get_children(item):
             if self._find_and_highlight_item(child, target_path):
                 return True
-        
+
         return False
-    
+
     def open_selected_folder(self, event=None):
         """打开选中的文件夹"""
         selected_item = self.folder_tree.selection()
         if selected_item:
             item = selected_item[0]
-            values = self.folder_tree.item(item, 'values')
+            values = self.folder_tree.item(item, "values")
             if values:
                 folder_path = values[0]
                 if os.path.exists(folder_path) and os.path.isdir(folder_path):
                     # 打开文件夹
-                    if os.name == 'nt':
+                    if os.name == "nt":
                         os.startfile(folder_path)
                     else:
-                        subprocess.call(['open', folder_path])
-    
+                        subprocess.call(["open", folder_path])
+
     def open_current_folder(self):
         """打开当前选中的文件夹"""
         selected_item = self.folder_tree.selection()
         if selected_item:
             item = selected_item[0]
-            values = self.folder_tree.item(item, 'values')
+            values = self.folder_tree.item(item, "values")
             if values:
                 folder_path = values[0]
                 if os.path.exists(folder_path):
                     if os.path.isdir(folder_path):
                         # 打开文件夹
-                        if os.name == 'nt':
+                        if os.name == "nt":
                             os.startfile(folder_path)
                         else:
-                            subprocess.call(['open', folder_path])
+                            subprocess.call(["open", folder_path])
                     else:
                         # 打开文件所在的文件夹
                         folder_path = os.path.dirname(folder_path)
-                        if os.name == 'nt':
+                        if os.name == "nt":
                             os.startfile(folder_path)
                         else:
-                            subprocess.call(['open', folder_path])
+                            subprocess.call(["open", folder_path])
         else:
             # 没有选中时打开视频资料库根目录
             if os.path.exists(self.video_library_dir):
-                if os.name == 'nt':
+                if os.name == "nt":
                     os.startfile(self.video_library_dir)
                 else:
-                    subprocess.call(['open', self.video_library_dir])
-    
+                    subprocess.call(["open", self.video_library_dir])
+
     def create_new_folder(self):
         """新建文件夹"""
         # 获取当前选中的文件夹
@@ -5269,12 +6527,12 @@ class ScreenRecorder:
             parent_path = self.video_library_dir
         else:
             item = selected_item[0]
-            values = self.folder_tree.item(item, 'values')
+            values = self.folder_tree.item(item, "values")
             if values:
                 parent_path = values[0]
             else:
                 parent_path = self.video_library_dir
-        
+
         # 创建文件夹名称输入窗口
         def create_folder():
             folder_name = folder_var.get().strip()
@@ -5291,24 +6549,28 @@ class ScreenRecorder:
                 else:
                     messagebox.showerror("错误", "文件夹已存在")
             window.destroy()
-        
+
         window = tk.Toplevel(self.root)
         window.title("新建文件夹")
         window.geometry("300x150")
         window.resizable(False, False)
-        window.attributes('-topmost', True)
-        
+        window.attributes("-topmost", True)
+
         tk.Label(window, text="文件夹名称：").pack(pady=10)
         folder_var = tk.StringVar()
         entry = ttk.Entry(window, textvariable=folder_var)
         entry.pack(fill=tk.X, padx=20, pady=5)
         entry.focus()
-        
+
         button_frame = tk.Frame(window)
         button_frame.pack(pady=10)
-        ttk.Button(button_frame, text="确定", command=create_folder, style='Accent.TButton').pack(side=tk.LEFT, padx=10)
-        ttk.Button(button_frame, text="取消", command=window.destroy, style='Custom.TButton').pack(side=tk.LEFT, padx=10)
-    
+        ttk.Button(
+            button_frame, text="确定", command=create_folder, style="Accent.TButton"
+        ).pack(side=tk.LEFT, padx=10)
+        ttk.Button(
+            button_frame, text="取消", command=window.destroy, style="Custom.TButton"
+        ).pack(side=tk.LEFT, padx=10)
+
     def import_file(self):
         """导入文件"""
         # 获取当前选中的文件夹
@@ -5318,18 +6580,21 @@ class ScreenRecorder:
             parent_path = self.video_library_dir
         else:
             item = selected_item[0]
-            values = self.folder_tree.item(item, 'values')
+            values = self.folder_tree.item(item, "values")
             if values:
                 parent_path = values[0]
             else:
                 parent_path = self.video_library_dir
-        
+
         # 打开系统文件选择器
         file_paths = filedialog.askopenfilenames(
             title="选择要导入的文件",
-            filetypes=[("视频文件", "*.avi *.mp4 *.mkv *.mov *.wmv"), ("所有文件", "*.*")]
+            filetypes=[
+                ("视频文件", "*.mp4 *.avi *.mkv *.mov *.wmv"),
+                ("所有文件", "*.*"),
+            ],
         )
-        
+
         if file_paths:
             success_count = 0
             fail_count = 0
@@ -5337,7 +6602,7 @@ class ScreenRecorder:
                 try:
                     file_name = os.path.basename(src_path)
                     dst_path = os.path.join(parent_path, file_name)
-                    
+
                     # 如果目标文件已存在，生成新文件名
                     if os.path.exists(dst_path):
                         name, ext = os.path.splitext(file_name)
@@ -5346,34 +6611,35 @@ class ScreenRecorder:
                             file_name = f"{name}_{counter}{ext}"
                             dst_path = os.path.join(parent_path, file_name)
                             counter += 1
-                    
+
                     # 复制文件
                     import shutil
+
                     shutil.copy2(src_path, dst_path)
                     success_count += 1
                 except Exception as e:
                     fail_count += 1
                     print(f"导入文件失败: {str(e)}")
-            
+
             # 更新文件夹结构
             self.init_folder_structure()
-            
+
             if success_count > 0:
                 self.show_notification(f"成功导入 {success_count} 个文件", is_weak=True)
             if fail_count > 0:
                 messagebox.showerror("错误", f"有 {fail_count} 个文件导入失败")
-    
+
     def rename_selected_item(self):
         """重命名选中的项目"""
         # 检查是否选中了文件夹
         selected_folder = self.folder_tree.selection()
         if selected_folder:
             item = selected_folder[0]
-            values = self.folder_tree.item(item, 'values')
+            values = self.folder_tree.item(item, "values")
             if values:
                 old_path = values[0]
                 old_name = os.path.basename(old_path)
-                
+
                 # 创建重命名窗口
                 def rename_item():
                     new_name = name_var.get().strip()
@@ -5390,13 +6656,13 @@ class ScreenRecorder:
                         else:
                             messagebox.showerror("错误", "名称已存在")
                     window.destroy()
-                
+
                 window = tk.Toplevel(self.library_frame)
                 window.title("重命名")
                 window.geometry("600x300")
                 window.resizable(False, False)
-                window.attributes('-topmost', True)
-                
+                window.attributes("-topmost", True)
+
                 # 计算弹窗位置，使其显示在视频资料库模块内
                 library_x = self.library_frame.winfo_x()
                 library_y = self.library_frame.winfo_y()
@@ -5407,20 +6673,30 @@ class ScreenRecorder:
                 x = library_x + (library_width - window_width) // 2
                 y = library_y + (library_height - window_height) // 2
                 window.geometry(f"{window_width}x{window_height}+{x}+{y}")
-                
-                tk.Label(window, text="新名称：", font=('Arial', 12)).pack(pady=20)
+
+                tk.Label(window, text="新名称：", font=("Arial", 12)).pack(pady=20)
                 name_var = tk.StringVar(value=old_name)
-                entry = ttk.Entry(window, textvariable=name_var, font=('Arial', 12))
+                entry = ttk.Entry(window, textvariable=name_var, font=("Arial", 12))
                 entry.pack(fill=tk.X, padx=40, pady=10)
                 entry.select_range(0, tk.END)
                 entry.focus()
-                
+
                 button_frame = tk.Frame(window)
                 button_frame.pack(pady=30)
-                ttk.Button(button_frame, text="确定", command=rename_item, style='Accent.TButton').pack(side=tk.LEFT, padx=20)
-                ttk.Button(button_frame, text="取消", command=window.destroy, style='Custom.TButton').pack(side=tk.LEFT, padx=20)
+                ttk.Button(
+                    button_frame,
+                    text="确定",
+                    command=rename_item,
+                    style="Accent.TButton",
+                ).pack(side=tk.LEFT, padx=20)
+                ttk.Button(
+                    button_frame,
+                    text="取消",
+                    command=window.destroy,
+                    style="Custom.TButton",
+                ).pack(side=tk.LEFT, padx=20)
             return
-        
+
         # 检查是否选中了文件
         selected_file = self.file_listbox.curselection()
         if selected_file:
@@ -5437,13 +6713,13 @@ class ScreenRecorder:
                 if index < len(results):
                     old_path = results[index]
                     old_name = os.path.basename(old_path)
-                    
+
                     # 创建重命名窗口
                     def rename_item():
                         new_name = name_var.get().strip()
                         if new_name and new_name != old_name:
-                            if not new_name.endswith('.avi'):
-                                new_name += '.avi'
+                            if not new_name.endswith((".mp4", ".avi", ".mkv", ".mov")):
+                                new_name += ".mp4"
                             new_path = os.path.join(os.path.dirname(old_path), new_name)
                             if not os.path.exists(new_path):
                                 try:
@@ -5452,17 +6728,19 @@ class ScreenRecorder:
                                     self.search_files()
                                     self.show_notification("重命名成功", is_weak=True)
                                 except Exception as e:
-                                    messagebox.showerror("错误", f"重命名失败: {str(e)}")
+                                    messagebox.showerror(
+                                        "错误", f"重命名失败: {str(e)}"
+                                    )
                             else:
                                 messagebox.showerror("错误", "名称已存在")
                         window.destroy()
-                    
+
                     window = tk.Toplevel(self.library_frame)
                     window.title("重命名")
                     window.geometry("600x300")
                     window.resizable(False, False)
-                    window.attributes('-topmost', True)
-                    
+                    window.attributes("-topmost", True)
+
                     # 计算弹窗位置，使其显示在视频资料库模块内
                     library_x = self.library_frame.winfo_x()
                     library_y = self.library_frame.winfo_y()
@@ -5473,32 +6751,46 @@ class ScreenRecorder:
                     x = library_x + (library_width - window_width) // 2
                     y = library_y + (library_height - window_height) // 2
                     window.geometry(f"{window_width}x{window_height}+{x}+{y}")
-                    
-                    tk.Label(window, text="新名称：", font=('Arial', 12)).pack(pady=20)
+
+                    tk.Label(window, text="新名称：", font=("Arial", 12)).pack(pady=20)
                     name_var = tk.StringVar(value=old_name)
-                    entry = ttk.Entry(window, textvariable=name_var, font=('Arial', 12))
+                    entry = ttk.Entry(window, textvariable=name_var, font=("Arial", 12))
                     entry.pack(fill=tk.X, padx=40, pady=10)
                     entry.select_range(0, tk.END)
                     entry.focus()
-                    
+
                     button_frame = tk.Frame(window)
                     button_frame.pack(pady=30)
-                    ttk.Button(button_frame, text="确定", command=rename_item, style='Accent.TButton').pack(side=tk.LEFT, padx=20)
-                    ttk.Button(button_frame, text="取消", command=window.destroy, style='Custom.TButton').pack(side=tk.LEFT, padx=20)
-    
+                    ttk.Button(
+                        button_frame,
+                        text="确定",
+                        command=rename_item,
+                        style="Accent.TButton",
+                    ).pack(side=tk.LEFT, padx=20)
+                    ttk.Button(
+                        button_frame,
+                        text="取消",
+                        command=window.destroy,
+                        style="Custom.TButton",
+                    ).pack(side=tk.LEFT, padx=20)
+
     def delete_selected_item(self):
         """删除选中的项目"""
         # 检查是否选中了文件夹
         selected_folder = self.folder_tree.selection()
         if selected_folder:
             item = selected_folder[0]
-            values = self.folder_tree.item(item, 'values')
+            values = self.folder_tree.item(item, "values")
             if values:
                 path = values[0]
-                confirm = messagebox.askyesno("确认删除", f"确定要删除 '{os.path.basename(path)}' 及其所有内容吗？")
+                confirm = messagebox.askyesno(
+                    "确认删除",
+                    f"确定要删除 '{os.path.basename(path)}' 及其所有内容吗？",
+                )
                 if confirm:
                     try:
                         import shutil
+
                         shutil.rmtree(path)
                         # 更新文件夹结构
                         self.init_folder_structure()
@@ -5506,7 +6798,7 @@ class ScreenRecorder:
                     except Exception as e:
                         messagebox.showerror("错误", f"删除失败: {str(e)}")
             return
-        
+
         # 检查是否选中了文件
         selected_file = self.file_listbox.curselection()
         if selected_file:
@@ -5522,7 +6814,9 @@ class ScreenRecorder:
                                 results.append(os.path.join(root, file_name))
                 if index < len(results):
                     path = results[index]
-                    confirm = messagebox.askyesno("确认删除", f"确定要删除 '{os.path.basename(path)}' 吗？")
+                    confirm = messagebox.askyesno(
+                        "确认删除", f"确定要删除 '{os.path.basename(path)}' 吗？"
+                    )
                     if confirm:
                         try:
                             os.remove(path)
@@ -5535,132 +6829,159 @@ class ScreenRecorder:
     def create_mini_control(self):
         """创建缩略功能区"""
         # 检查是否已存在缩略功能区
-        if hasattr(self, 'mini_window') and self.mini_window:
+        if hasattr(self, "mini_window") and self.mini_window:
             try:
                 self.mini_window.destroy()
             except:
                 pass
-        
+
         # 创建缩略功能区窗口 - 作为完全独立的窗口
         self.mini_window = tk.Toplevel()
         self.mini_window.title("录屏控制")
         self.mini_window.geometry("560x320")
-        self.mini_window.attributes('-topmost', True)
-        self.mini_window.attributes('-toolwindow', True)
+        self.mini_window.attributes("-topmost", True)
+        self.mini_window.attributes("-toolwindow", True)
         self.mini_window.configure(bg="#1a1a1a")
-        self.mini_window.configure(relief='flat', borderwidth=0)
-        
+        self.mini_window.configure(relief="flat", borderwidth=0)
+
         # 固定在屏幕顶部
         self.mini_window.geometry("560x320+50+50")
-        
+
         # 创建进度条画布 - 同步显示时间轴和标记
-        self.mini_progress_canvas = tk.Canvas(self.mini_window, height=80, bg="#2a2a2a", 
-                                              cursor="hand1", highlightthickness=0)
+        self.mini_progress_canvas = tk.Canvas(
+            self.mini_window,
+            height=80,
+            bg="#2a2a2a",
+            cursor="hand1",
+            highlightthickness=0,
+        )
         self.mini_progress_canvas.pack(fill=tk.X, padx=20, pady=(15, 10))
-        
+
         # 时间标签
-        self.mini_time_label = tk.Label(self.mini_window, text="00:00:00 / 00:00:00", 
-                                        font=('Arial', 10),
-                                        bg="#1a1a1a", fg='#aaaaaa')
+        self.mini_time_label = tk.Label(
+            self.mini_window,
+            text="00:00:00 / 00:00:00",
+            font=("Arial", 10),
+            bg="#1a1a1a",
+            fg="#aaaaaa",
+        )
         self.mini_time_label.pack(pady=(0, 10))
-        
+
         # 创建控制按钮
         button_frame = tk.Frame(self.mini_window, bg="#1a1a1a")
         button_frame.pack(fill=tk.X, pady=(0, 15), padx=20)
-        
+
         # 创建按钮 - 全部顶部对齐
-        self.mini_pause_btn = ttk.Button(button_frame, text="暂停录屏", command=self.pause_recording, width=10, takefocus=False)
+        self.mini_pause_btn = ttk.Button(
+            button_frame,
+            text="暂停录屏",
+            command=self.pause_recording,
+            width=10,
+            takefocus=False,
+        )
         self.mini_pause_btn.pack(side=tk.LEFT, padx=10, anchor=tk.N)
-        
-        self.mini_stop_btn = ttk.Button(button_frame, text="结束录屏", command=self.stop_recording, width=10)
+
+        self.mini_stop_btn = ttk.Button(
+            button_frame, text="结束录屏", command=self.stop_recording, width=10
+        )
         self.mini_stop_btn.pack(side=tk.LEFT, padx=10, anchor=tk.N)
-        
+
         # 标记进度按钮容器 - 垂直布局（按钮在上，角标在下），顶部对齐
         mark_btn_frame = tk.Frame(button_frame, bg="#1a1a1a")
         mark_btn_frame.pack(side=tk.LEFT, padx=10, anchor=tk.N)
-        
+
         # 按钮行容器
         btn_row_frame = tk.Frame(mark_btn_frame, bg="#1a1a1a")
         btn_row_frame.pack(side=tk.TOP)
-        
+
         # 修改标记进度按钮颜色，使其更突出
-        self.mini_mark_btn = ttk.Button(btn_row_frame, text="标记进度[空格]", 
-                                       command=lambda: self.mark_progress(source="mini"), width=14, takefocus=False)
+        self.mini_mark_btn = ttk.Button(
+            btn_row_frame,
+            text="标记进度[空格]",
+            command=lambda: self.mark_progress(source="mini"),
+            width=14,
+            takefocus=False,
+        )
         # 配置按钮样式
-        self.mini_mark_btn.configure(style='Accent.TButton')
+        self.mini_mark_btn.configure(style="Accent.TButton")
         self.mini_mark_btn.pack(side=tk.LEFT)
-        
+
         # 添加提示图形（圆形+？）- 与按钮同一行
-        help_canvas = tk.Canvas(btn_row_frame, width=20, height=24, bg="#1a1a1a", highlightthickness=0)
+        help_canvas = tk.Canvas(
+            btn_row_frame, width=20, height=24, bg="#1a1a1a", highlightthickness=0
+        )
         help_canvas.pack(side=tk.LEFT, padx=5)
         # 绘制圆形
         help_canvas.create_oval(2, 2, 18, 18, fill="#34a853", outline="white", width=2)
         # 绘制问号
-        help_canvas.create_text(10, 12, text="?", fill="white", font=('Arial', 12, 'bold'))
-        
+        help_canvas.create_text(
+            10, 12, text="?", fill="white", font=("Arial", 12, "bold")
+        )
 
-        
         # 添加鼠标移入提示
         def show_mark_tooltip(event):
             # 销毁之前的提示窗口
-            if hasattr(self, 'mark_btn_tooltip') and self.mark_btn_tooltip:
+            if hasattr(self, "mark_btn_tooltip") and self.mark_btn_tooltip:
                 try:
                     self.mark_btn_tooltip.destroy()
                 except:
                     pass
-            
+
             # 创建提示窗口
             tooltip = tk.Toplevel(self.mini_window)
             tooltip.title("")
             tooltip.geometry("320x80")
             tooltip.transient(self.mini_window)
             tooltip.overrideredirect(True)  # 无标题栏
-            tooltip.attributes('-topmost', True)
-            tooltip.attributes('-alpha', 0.9)  # 增加透明度，使其更明显
+            tooltip.attributes("-topmost", True)
+            tooltip.attributes("-alpha", 0.9)  # 增加透明度，使其更明显
             tooltip.configure(bg="#333", relief="solid", borderwidth=2, bd=2)
-            
+
             # 添加提示文本
-            label = tk.Label(tooltip, 
-                            text="标记进度后视频进度条上将同步产生黄色标记，便于定位标记片段", 
-                            font=('Arial', 10), 
-                            bg="#333", fg="#fff",
-                            wraplength=300,  # 增加换行宽度
-                            justify=tk.LEFT)  # 左对齐
+            label = tk.Label(
+                tooltip,
+                text="标记进度后视频进度条上将同步产生黄色标记，便于定位标记片段",
+                font=("Arial", 10),
+                bg="#333",
+                fg="#fff",
+                wraplength=300,  # 增加换行宽度
+                justify=tk.LEFT,
+            )  # 左对齐
             label.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-            
+
             # 计算位置 - 显示在按钮右侧，避免被遮挡
             x = mark_btn_frame.winfo_rootx() + mark_btn_frame.winfo_width() + 10
             y = mark_btn_frame.winfo_rooty()
-            
+
             # 确保提示窗口在屏幕内
             screen_width = tooltip.winfo_screenwidth()
             screen_height = tooltip.winfo_screenheight()
             tooltip_width = 320
             tooltip_height = 80
-            
+
             if x + tooltip_width > screen_width:
                 x = screen_width - tooltip_width - 10
             if y + tooltip_height > screen_height:
                 y = screen_height - tooltip_height - 10
             if y < 10:
                 y = 10
-            
+
             tooltip.geometry(f"{tooltip_width}x{tooltip_height}+{x}+{y}")
-            
+
             # 强制更新窗口
             tooltip.update_idletasks()
             tooltip.lift()
-            
+
             # 存储tooltip引用
             self.mark_btn_tooltip = tooltip
-        
+
         def hide_mark_tooltip(event):
-            if hasattr(self, 'mark_btn_tooltip') and self.mark_btn_tooltip:
+            if hasattr(self, "mark_btn_tooltip") and self.mark_btn_tooltip:
                 try:
                     self.mark_btn_tooltip.destroy()
                 except:
                     pass
-        
+
         # 绑定事件到整个标记进度按钮区域
         self.mini_mark_btn.bind("<Enter>", show_mark_tooltip)
         self.mini_mark_btn.bind("<Leave>", hide_mark_tooltip)
@@ -5668,134 +6989,151 @@ class ScreenRecorder:
         help_canvas.bind("<Leave>", hide_mark_tooltip)
         mark_btn_frame.bind("<Enter>", show_mark_tooltip)
         mark_btn_frame.bind("<Leave>", hide_mark_tooltip)
-        
+
         # 绑定事件到整个缩略功能区窗口
         self.mini_window.bind("<Leave>", hide_mark_tooltip)
-        
+
         # 添加状态标签
-        self.mini_status_label = tk.Label(self.mini_window, text="录屏中...", 
-                                        font=('Arial', 10),  # 增大字体
-                                        bg="#1a1a1a", fg='green')
+        self.mini_status_label = tk.Label(
+            self.mini_window,
+            text="录屏中...",
+            font=("Arial", 10),  # 增大字体
+            bg="#1a1a1a",
+            fg="green",
+        )
         self.mini_status_label.pack(pady=15)
-        
+
         # 确保窗口显示在最前面
         self.mini_window.update_idletasks()  # 强制更新窗口任务
         self.mini_window.update()  # 强制更新窗口
-        
+
         # 更新角标内容（必须在窗口创建完成后调用）
         self.update_mini_progress_bar()
         self.mini_window.lift()
         self.mini_window.focus_force()
         self.mini_window.deiconify()
-        
+
         # 重写窗口关闭行为，确保点击关闭按钮时只是隐藏窗口，而不是销毁
         def on_close():
             self.mini_window.withdraw()
-        
+
         self.mini_window.protocol("WM_DELETE_WINDOW", on_close)
-        
+
         # 在缩略功能区窗口上也绑定空格键 - 标记进度
         def on_mini_space_key(event):
             # 如果正在录屏且处于暂停状态，不执行标记
             if self.recording and self.paused:
-                return 'break'
+                return "break"
             self.mark_progress(source="mini")
-            return 'break'  # 阻止空格键的默认行为
-        self.mini_window.bind('<space>', on_mini_space_key)
-    
+            return "break"  # 阻止空格键的默认行为
+
+        self.mini_window.bind("<space>", on_mini_space_key)
+
     def close_mini_control(self):
         """关闭缩略功能区"""
-        if hasattr(self, 'mini_window') and self.mini_window:
+        if hasattr(self, "mini_window") and self.mini_window:
             try:
                 self.mini_window.destroy()
                 self.mini_window = None
             except:
                 pass
-    
+
     def show_time_tooltip(self, x, y, time_seconds):
         """显示时间提示"""
         # 销毁之前的提示窗口
-        if hasattr(self, 'time_tooltip') and self.time_tooltip:
+        if hasattr(self, "time_tooltip") and self.time_tooltip:
             try:
                 self.time_tooltip.destroy()
             except:
                 pass
-        
+
         # 创建新的提示窗口
         self.time_tooltip = tk.Toplevel(self.root)
         self.time_tooltip.title("")
         self.time_tooltip.geometry("80x30")
         self.time_tooltip.transient(self.root)
         self.time_tooltip.overrideredirect(True)  # 无标题栏
-        self.time_tooltip.attributes('-topmost', True)
+        self.time_tooltip.attributes("-topmost", True)
         self.time_tooltip.configure(bg="#333", relief="solid", borderwidth=1)
-        
+
         # 格式化时间
         time_str = self.format_time(time_seconds)
-        
+
         # 创建标签
-        label = tk.Label(self.time_tooltip, text=time_str, 
-                        font=('Arial', 10), 
-                        bg="#333", fg="#fff")
+        label = tk.Label(
+            self.time_tooltip, text=time_str, font=("Arial", 10), bg="#333", fg="#fff"
+        )
         label.pack(fill=tk.BOTH, expand=True, padx=5, pady=3)
-        
+
         # 计算提示窗口位置
         # 将坐标从canvas转换为屏幕坐标
         canvas_x = self.progress_canvas.winfo_rootx() + x
         canvas_y = self.progress_canvas.winfo_rooty() + y
-        
+
         # 调整位置，使提示窗口显示在鼠标上方
         tooltip_width = 80
         tooltip_height = 30
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        
+
         # 确保提示窗口在屏幕内
         tooltip_x = canvas_x - tooltip_width // 2
         tooltip_y = canvas_y - tooltip_height - 10
-        
+
         if tooltip_x < 0:
             tooltip_x = 0
         elif tooltip_x + tooltip_width > screen_width:
             tooltip_x = screen_width - tooltip_width
-        
+
         if tooltip_y < 0:
             tooltip_y = canvas_y + 10
-        
-        self.time_tooltip.geometry(f"{tooltip_width}x{tooltip_height}+{tooltip_x}+{tooltip_y}")
-    
+
+        self.time_tooltip.geometry(
+            f"{tooltip_width}x{tooltip_height}+{tooltip_x}+{tooltip_y}"
+        )
+
     def save_recording_path(self):
         """保存录制路径到文件"""
         if self.video_file:
             try:
-                with open(self.recordings_file, 'a', encoding='utf-8') as f:
-                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {self.video_file}\n")
+                with open(self.recordings_file, "a", encoding="utf-8") as f:
+                    f.write(
+                        f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {self.video_file}\n"
+                    )
             except Exception as e:
                 print(f"保存录制路径失败: {e}")
-    
+
     def show_marker_time_tooltip(self, time_str, x_pos):
         """显示标记时间提示"""
         self.hide_marker_time_tooltip()
-        
+
         canvas_width = self.progress_canvas.winfo_width()
         tooltip_x = min(x_pos, canvas_width - 60)
         tooltip_x = max(10, tooltip_x)
-        
-        self.marker_tooltip = tk.Label(self.progress_canvas, text=time_str,
-                                       bg="#ffeb3b", fg="#000000", font=('Arial', 10, 'bold'),
-                                       padx=8, pady=4, relief='solid', bd=1)
+
+        self.marker_tooltip = tk.Label(
+            self.progress_canvas,
+            text=time_str,
+            bg="#ffeb3b",
+            fg="#000000",
+            font=("Arial", 10, "bold"),
+            padx=8,
+            pady=4,
+            relief="solid",
+            bd=1,
+        )
         self.marker_tooltip.place(x=tooltip_x - 30, y=25)
-    
+
     def hide_marker_time_tooltip(self):
         """隐藏标记时间提示"""
-        if hasattr(self, 'marker_tooltip') and self.marker_tooltip:
+        if hasattr(self, "marker_tooltip") and self.marker_tooltip:
             self.marker_tooltip.destroy()
             self.marker_tooltip = None
-    
+
     def on_window_close(self):
         """窗口关闭时的处理"""
         print("[关闭] 检测到窗口关闭...")
-        
+
         # 如果正在合并，等待合并完成
         if self.merging_in_progress:
             print("[关闭] 正在等待合并完成...")
@@ -5803,27 +7141,27 @@ class ScreenRecorder:
             while self.merging_in_progress:
                 time.sleep(0.1)
             print("[关闭] 合并已完成")
-        
+
         # 如果正在录屏，停止录屏
         if self.recording:
             print("[关闭] 正在停止录屏...")
             self.stop_recording()
-        
+
         # 销毁窗口
         self.root.destroy()
-    
+
     def extract_clip_with_cv2(self, clip, clip_path, fps, width, height):
         """使用cv2方式提取视频片段（回退方案）"""
         cap = cv2.VideoCapture(self.video_file)
         if cap.isOpened():
             start_frame = int(clip["start"] * fps)
             end_frame = int(clip["end"] * fps)
-            
-            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+
+            fourcc = cv2.VideoWriter_fourcc(*"XVID")
             out = cv2.VideoWriter(clip_path, fourcc, fps, (width, height))
-            
+
             cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-            
+
             current_frame = start_frame
             while current_frame <= end_frame and cap.isOpened():
                 ret, frame = cap.read()
@@ -5831,12 +7169,12 @@ class ScreenRecorder:
                     break
                 out.write(frame)
                 current_frame += 1
-            
+
             cap.release()
             out.release()
         else:
             print("无法打开原始视频文件")
-    
+
     def format_time(self, seconds):
         """格式化时间（支持小时显示）"""
         hours = int(seconds // 3600)
@@ -5847,8 +7185,10 @@ class ScreenRecorder:
         else:
             return f"{mins:02d}:{secs:02d}"
 
+
 if __name__ == "__main__":
     from PIL import Image, ImageTk
+
     root = tk.Tk()
     app = ScreenRecorder(root)
     # 设置窗口关闭处理
